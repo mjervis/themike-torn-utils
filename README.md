@@ -2,6 +2,8 @@
 
 A static, client-side web app that shows your [Torn](https://www.torn.com) inventory alongside what you paid for each item, what it's worth now, and the profit if you sell it — with the item market fee (5%) and anonymous listing fee (+10%) applied.
 
+**Live:** https://mjervis.github.io/themike-torn-utils/
+
 No server, no build step. Your API key goes from your browser straight to `api.torn.com` and nowhere else.
 
 ## How it works
@@ -48,7 +50,7 @@ node --test
 
 ## Deploying
 
-Any static host works — GitHub Pages, Cloudflare Pages, Netlify. Publish the repository root as-is.
+Hosted on GitHub Pages from the root of `main` — every push to `main` redeploys. Any other static host (Cloudflare Pages, Netlify) works too: publish the repository root as-is.
 
 ## Torn API Terms of Service
 
