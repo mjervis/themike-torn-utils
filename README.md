@@ -24,7 +24,7 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 
 Both percentages are editable in Settings in case Torn changes them.
 
-**Rate limits.** Requests are spaced ~650 ms apart to stay under Torn's 100 calls/minute. Fetching lowest listings costs one call per item, so it's opt-in.
+**Rate limits.** Requests are spaced 1 second apart (~60/minute), leaving headroom under Torn's 100 calls/minute, which is shared across all of a user's keys and tools. Fetching lowest listings costs one call per item, so it's opt-in.
 
 ## Running locally
 
@@ -50,7 +50,20 @@ node --test
 
 Any static host works — GitHub Pages, Cloudflare Pages, Netlify. Publish the repository root as-is.
 
+## Torn API Terms of Service
+
+The app follows the [API ToS guidelines](https://www.torn.com/api.html):
+
+| Data Storage | Data Sharing | Purpose of Use | Key Storage & Sharing | Key Access Level |
+| --- | --- | --- | --- | --- |
+| Only locally (settings, manual costs, cached listing prices in the browser) | Nobody | Not eligible — only the end user has access | Stored locally only if “Remember” is ticked / Not shared | Custom: `user` → inventory, log; `torn` → items, logtypes; `market` → itemmarket. Or Full Access. |
+
+- The ToS table is shown where the key is entered, with a link to create a custom key with only these selections.
+- Invalid or disabled keys (error codes 1, 2, 10, 13, 18) are forgotten immediately and never re-sent, as required to avoid IP bans. Rate-limit/blocked responses (5, 8, 9, 14) stop all further calls.
+- Calls carry `comment=inventory-profit` so users can audit them in their key log.
+- Global caches (`market → itemmarket`) aren't bypassed. The `timestamp` parameter is only used on inventory when the user opts in, which the docs explicitly allow.
+- “Forget my key & clear saved data” removes everything the page stored.
+
 ## Notes
 
 - Torn log `data` fields aren't formally documented, so the parser accepts several shapes (`items[]`/`item`, `qty`/`quantity`, `cost_each`/`cost_total`). Expand a row and open “Raw log data” to check what was read.
-- Follow Torn's [API terms](https://www.torn.com/api.html): tell users what you store and why. This app stores nothing server-side; the key is kept in `localStorage` only if “Remember” is ticked.

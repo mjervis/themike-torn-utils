@@ -50,7 +50,11 @@ button:disabled { opacity: .5; cursor: progress; }
 main { max-width: 1400px; margin: 0 auto; padding: 16px 20px; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 14px; }
-.intro p { margin: 4px 0; color: var(--muted); }
+.tos summary { cursor: pointer; font-weight: 600; }
+.tos p { margin: 8px 0; color: var(--muted); }
+.tos-table th, .tos-table td { white-space: normal; vertical-align: top; min-width: 140px; }
+.tos-table th { cursor: default; position: static; }
+.tos-table thead td { font-size: 12px; background: var(--panel-2); }
 
 .settings summary { cursor: pointer; font-weight: 600; }
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }

@@ -19,12 +19,45 @@
   </header>
 
   <main>
-    <section id="intro" class="panel intro">
-      <p>Enter a <strong>Full Access</strong> API key from
-        <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener">Torn → Preferences → API Keys</a>.
-        Full access is needed because purchase prices come from your logs.</p>
-      <p>Your key only goes from your browser straight to <code>api.torn.com</code>. Nothing is sent anywhere else, and it's only stored if you tick “Remember”.</p>
-    </section>
+    <details id="tos" class="panel tos" open>
+      <summary>API key use &amp; Terms of Service</summary>
+      <p>You keep full control of your data. This page runs entirely in your browser and talks only to
+        <code>api.torn.com</code> — there is no server, and nothing is sent anywhere else.</p>
+      <div class="table-wrap">
+        <table class="tos-table">
+          <thead>
+            <tr>
+              <th>Data Storage</th>
+              <th>Data Sharing</th>
+              <th>Purpose of Use</th>
+              <th>Key Storage &amp; Sharing</th>
+              <th>Key Access Level</th>
+            </tr>
+            <tr class="muted">
+              <td>Will the data be stored for any purpose?</td>
+              <td>Who can access the data besides the end user?</td>
+              <td>What is the stored data being used for?</td>
+              <td>Will the API key be stored securely and who can access it?</td>
+              <td>What key access level or specific selections are required?</td>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Only locally — settings, manual costs and cached listing prices in your browser</td>
+              <td>Nobody</td>
+              <td>Not eligible — only you have access. Shows you your own inventory's cost and profit.</td>
+              <td>Stored locally only if you tick “Remember” / Not shared</td>
+              <td>Custom: <code>user</code> → inventory, log; <code>torn</code> → items, logtypes; <code>market</code> → itemmarket. Or Full Access.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Recommended:</strong>
+        <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Inventory%20Profit&amp;user=inventory,log&amp;torn=items,logtypes&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+        with only the selections above. A Full Access key also works — logs are needed because that's where your purchase prices are recorded.
+        You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
+      <p><button type="button" id="forget-btn" class="secondary">Forget my key &amp; clear saved data</button></p>
+    </details>
 
     <details id="settings" class="panel settings">
       <summary>Settings</summary>

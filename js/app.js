@@ -1,4 +1,4 @@
-import { createClient, TornApiError } from './api.js';
+import { createClient } from './api.js';
 import {
   saleRoutes, isPurchaseLogTitle, isDefaultPurchaseLog,
   lotsByItem, costBasis, profit, breakEven,
@@ -29,6 +29,7 @@ const state = {
   expanded: new Set(),
   sort: store.get('sort', { key: 'profit', dir: 'desc' }),
   inventoryAt: null,
+  rejectedKeys: new Set(),  // keys Torn said are invalid/disabled; never re-sent this session
 };
 
 const settings = {
@@ -82,6 +83,9 @@ function status(msg, isError = false) {
 async function load() {
   const key = $('#api-key').value.trim();
   if (!key) return;
+  if (state.rejectedKeys.has(key)) {
+    return status('Torn rejected this key earlier. Check it on Torn, or create a new one, before trying again.', true);
+  }
   if ($('#remember-key').checked) store.set('key', key); else store.del('key');
 
   state.client = createClient(key);
@@ -89,7 +93,9 @@ async function load() {
   btn.disabled = true;
   try {
     status('Loading item catalogue…');
-    const [items, logTypes] = await Promise.all([state.client.items(), state.client.logTypes()]);
+    // Sequential, so a bad key costs a single request rather than several.
+    const items = await state.client.items();
+    const logTypes = await state.client.logTypes();
     state.catalog = new Map(items.map((i) => [i.id, i]));
     state.logTypes = logTypes;
     renderLogTypes();
@@ -109,7 +115,7 @@ async function load() {
     state.rawLogs = new Map(logs.map((l) => [l.id, l]));
     state.lots = lotsByItem(logs);
 
-    $('#intro').hidden = true;
+    $('#tos').open = false;
     $('#results').hidden = false;
     settings.save();
 
@@ -120,8 +126,16 @@ async function load() {
     render();
   } catch (err) {
     console.error(err);
-    const hint = err instanceof TornApiError && [2, 16].includes(err.code)
-      ? ' — check the key is a Full Access key.' : '';
+    if (err.deadKey) {
+      // Torn ToS: stop using invalid or disabled keys straight away.
+      state.rejectedKeys.add(key);
+      state.client = null;
+      store.del('key');
+      $('#remember-key').checked = false;
+    }
+    const hint = err.deadKey ? ' — the key has been forgotten and won\'t be used again.'
+      : err.code === 16 ? ' — the key needs access to user → log (Full Access or the custom key above).'
+      : err.fatal ? ' — Torn asked us to stop for now; try again in a minute.' : '';
     status(`${err.message}${hint}`, true);
   } finally {
     btn.disabled = false;
@@ -153,7 +167,7 @@ async function refreshLowest() {
         const { lowest } = await state.client.lowestListing(targets[i].id);
         state.lowest[targets[i].id] = { price: lowest, at: Math.floor(Date.now() / 1000) };
       } catch (err) {
-        if (err instanceof TornApiError && err.code === 5) throw err; // rate limited: stop
+        if (err.fatal) throw err; // bad key or rate limited: stop rather than keep calling
       }
       if (i % 10 === 9) render();
     }
@@ -369,6 +383,16 @@ $('#price-source').addEventListener('change', async () => {
   if (needsFetch && state.client) await refreshLowest(); else render();
 });
 $('#refresh-prices').addEventListener('click', refreshLowest);
+$('#forget-btn').addEventListener('click', () => {
+  try { Object.keys(localStorage).filter((k) => k.startsWith('tip.')).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+  state.client = null;
+  state.lowest = {};
+  state.overrides = {};
+  $('#api-key').value = '';
+  $('#remember-key').checked = false;
+  $('#results').hidden = true;
+  status('Your key and all data saved by this page have been removed from this browser.');
+});
 
 // ---------- init ----------
 settings.restore();
