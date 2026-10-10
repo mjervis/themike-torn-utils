@@ -101,7 +101,10 @@ async function load() {
     renderLogTypes();
 
     status('Loading inventory…');
-    const inv = await state.client.inventory({ bypassCache: settings.read().bypassCache });
+    const inv = await state.client.inventory({
+      bypassCache: settings.read().bypassCache,
+      onCategory: (cat, i, n) => status(`Loading inventory… ${cat} (${i}/${n})`),
+    });
     state.inventoryAt = inv.timestamp;
     state.holdings = aggregate(inv.items);
 
@@ -122,7 +125,7 @@ async function load() {
     if (s.priceSource === 'lowest') await refreshLowest();
     const oldest = logs.length ? date(logs[logs.length - 1].timestamp) : null;
     status(`Loaded ${state.holdings.length} items and ${logs.length} purchase logs${oldest ? ` (back to ${oldest})` : ''}. ` +
-      `Inventory as of ${date(state.inventoryAt)}.`);
+      `Inventory as of ${state.inventoryAt ? date(state.inventoryAt) : 'now'}.`);
     render();
   } catch (err) {
     console.error(err);

@@ -10,7 +10,7 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 
 | Data | Endpoint (API v2) | Key level |
 | --- | --- | --- |
-| Inventory | `GET /user/inventory` (paginated, cached by Torn for 1 hour) | Minimal |
+| Inventory | `GET /user/inventory?cat=…` — one call per category (Torn requires `cat`), cached by Torn for 1 hour per category | Minimal |
 | Purchase prices | `GET /user/log?log=<ids>` — item market, bazaar, shop and abroad buy logs | **Full** |
 | Log type ids | `GET /torn/logtypes` — purchase types are picked by title, editable in Settings | Public |
 | Market value | `GET /torn/items` → `value.market_price` | Public |

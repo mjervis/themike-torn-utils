@@ -25,6 +25,13 @@ export class TornApiError extends Error {
   }
 }
 
+// TornInventoryItemType from the v2 spec (https://www.torn.com/swagger/openapi.json).
+const INVENTORY_CATEGORIES = [
+  'Alcohol', 'Artifact', 'Book', 'Booster', 'Candy', 'Car', 'Clothing', 'Collectible',
+  'Defensive', 'Drug', 'Energy Drink', 'Enhancer', 'Flower', 'Jewelry', 'Material', 'Medical',
+  'Melee', 'Other', 'Plushie', 'Primary', 'Secondary', 'Special', 'Supply Pack', 'Temporary', 'Tool',
+];
+
 async function throttle() {
   const wait = lastCall + MIN_GAP_MS - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -69,20 +76,37 @@ export function createClient(key) {
       return body.logtypes;
     },
 
-    /** Full inventory, following pagination. Cached by Torn for 1 hour unless bypass. */
-    async inventory({ bypassCache = false } = {}) {
+    /**
+     * Full inventory. Torn requires a category (error 21 without one, despite the spec), so
+     * walk every category and follow pagination within each. Cached by Torn for 1 hour per category.
+     */
+    async inventory({ bypassCache = false, onCategory } = {}) {
       const items = [];
       let timestamp = null;
-      let next = '/user/inventory';
-      let params = { limit: 250, timestamp: bypassCache ? Math.floor(Date.now() / 1000) : undefined };
-      for (let page = 0; next && page < 50; page++) {
-        const body = await get(next, params);
-        items.push(...body.inventory.items);
-        timestamp ??= body.inventory.timestamp;
-        next = body.inventory.items.length ? body._metadata?.links?.next : null;
-        params = {};
+      let accepted = 0;
+      const bypass = bypassCache ? Math.floor(Date.now() / 1000) : undefined;
+      for (const [i, cat] of INVENTORY_CATEGORIES.entries()) {
+        onCategory?.(cat, i + 1, INVENTORY_CATEGORIES.length);
+        let next = '/user/inventory';
+        let params = { cat, limit: 250, timestamp: bypass };
+        for (let page = 0; next && page < 20; page++) {
+          let body;
+          try {
+            body = await get(next, params);
+          } catch (err) {
+            if (err.code === 21) break; // category no longer exists in Torn: skip it
+            throw err;
+          }
+          if (page === 0) accepted++;
+          const found = body.inventory?.items ?? [];
+          items.push(...found);
+          timestamp = Math.min(timestamp ?? Infinity, body.inventory?.timestamp ?? Infinity);
+          next = found.length ? body._metadata?.links?.next : null;
+          params = {};
+        }
       }
-      return { items, timestamp };
+      if (!accepted) throw new TornApiError(21, 'Torn rejected every inventory category');
+      return { items, timestamp: Number.isFinite(timestamp) ? timestamp : null };
     },
 
     /**
