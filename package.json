@@ -1,0 +1,6 @@
+{
+  "name": "torn-inventory-profit",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

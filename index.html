@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Torn Inventory Profit</title>
+  <meta name="description" content="See what your Torn inventory cost, what it's worth and the profit after market fees.">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Torn Inventory Profit</h1>
+    <form id="key-form" class="key-form" autocomplete="off">
+      <label for="api-key" class="sr-only">Torn API key</label>
+      <input id="api-key" type="password" placeholder="Full access API key" spellcheck="false" required>
+      <label class="check"><input id="remember-key" type="checkbox"> Remember on this device</label>
+      <button type="submit" id="load-btn">Load</button>
+    </form>
+  </header>
+
+  <main>
+    <section id="intro" class="panel intro">
+      <p>Enter a <strong>Full Access</strong> API key from
+        <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener">Torn → Preferences → API Keys</a>.
+        Full access is needed because purchase prices come from your logs.</p>
+      <p>Your key only goes from your browser straight to <code>api.torn.com</code>. Nothing is sent anywhere else, and it's only stored if you tick “Remember”.</p>
+    </section>
+
+    <details id="settings" class="panel settings">
+      <summary>Settings</summary>
+      <div class="settings-grid">
+        <label>Item market fee %
+          <input id="market-fee" type="number" min="0" max="100" step="0.5" value="5">
+        </label>
+        <label>Extra anonymous fee %
+          <input id="anon-fee" type="number" min="0" max="100" step="0.5" value="10">
+        </label>
+        <label>Cost basis
+          <select id="cost-method">
+            <option value="recent">Most recent purchases (FIFO)</option>
+            <option value="average">Average of all purchases</option>
+          </select>
+        </label>
+        <label>Log pages to scan (100 each)
+          <input id="log-pages" type="number" min="1" max="200" value="20">
+        </label>
+        <label>Market price source
+          <select id="price-source">
+            <option value="market_price">Torn market value</option>
+            <option value="lowest">Lowest item market listing</option>
+          </select>
+        </label>
+        <label class="check"><input id="bypass-cache" type="checkbox"> Bypass inventory cache (normally 1 hour)</label>
+      </div>
+      <fieldset>
+        <legend>Purchase log types to read</legend>
+        <div id="log-types" class="log-types"><em>Load once to see available log types.</em></div>
+      </fieldset>
+    </details>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+
+    <section id="results" hidden>
+      <div class="toolbar">
+        <div class="routes" role="radiogroup" aria-label="Sale route">
+          <span>Sell via:</span>
+          <label><input type="radio" name="route" value="direct"> <span id="route-direct">Direct</span></label>
+          <label><input type="radio" name="route" value="market" checked> <span id="route-market">Item market</span></label>
+          <label><input type="radio" name="route" value="anon"> <span id="route-anon">Anonymous</span></label>
+        </div>
+        <div class="filters">
+          <input id="filter" type="search" placeholder="Filter items…">
+          <label class="check"><input id="hide-unpriced" type="checkbox" checked> Hide untradeable / no value</label>
+          <label class="check"><input id="only-costed" type="checkbox"> Only items with a known cost</label>
+          <button id="refresh-prices" type="button" class="secondary">Refresh lowest listings</button>
+        </div>
+      </div>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="table-wrap">
+        <table id="table">
+          <thead>
+            <tr>
+              <th data-sort="name">Item</th>
+              <th data-sort="qty" class="num">Qty</th>
+              <th data-sort="unitCost" class="num">Paid / unit</th>
+              <th data-sort="unitPrice" class="num">Market / unit</th>
+              <th data-sort="breakEven" class="num">Break-even</th>
+              <th data-sort="cost" class="num">Total paid</th>
+              <th data-sort="net" class="num">Net if sold</th>
+              <th data-sort="profit" class="num">Profit</th>
+              <th data-sort="roi" class="num">ROI</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="footnote">Click a row to see the purchases used for its cost. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Unofficial tool. Data from the <a href="https://www.torn.com/swagger.php" target="_blank" rel="noopener">Torn API v2</a>.
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
