@@ -41,6 +41,7 @@ async function throttle() {
 export function createClient(key) {
   // Once Torn rejects the key (or tells us to back off) this client makes no further calls.
   let halted = null;
+  let calls = 0;
 
   async function get(pathOrUrl, params = {}) {
     if (halted) throw halted;
@@ -52,6 +53,7 @@ export function createClient(key) {
     if (!url.searchParams.has('comment')) url.searchParams.set('comment', COMMENT);
 
     await throttle();
+    calls++;
     const res = await fetch(url, { headers: { Authorization: `ApiKey ${key}` } });
     if (!res.ok) throw new TornApiError(res.status, res.statusText);
     const body = await res.json();
@@ -64,6 +66,15 @@ export function createClient(key) {
   }
 
   return {
+    /** Number of requests this client has sent to Torn. */
+    get calls() { return calls; },
+
+    /** The key owner's id and name, so saved data can be kept per player. */
+    async me() {
+      const { profile } = await get('/user/basic');
+      return { id: profile.id, name: profile.name };
+    },
+
     /** All items in Torn with market value, image, type, etc. */
     async items() {
       const body = await get('/torn/items');
@@ -111,11 +122,11 @@ export function createClient(key) {
 
     /**
      * Logs of the given types, newest first, walking back in time.
-     * Stops at `from` (unix seconds) or after `maxPages` pages of 100.
+     * Starts at `to` (default: now) and stops at `from` (unix seconds) or after `maxPages` pages of 100.
      */
-    async logs(logIds, { from, maxPages = 20, onPage } = {}) {
+    async logs(logIds, { from, to: before, maxPages = 20, onPage } = {}) {
       const seen = new Map();
-      let to;
+      let to = before;
       for (let page = 0; page < maxPages; page++) {
         const body = await get('/user/log', { log: logIds.join(','), limit: 100, from, to });
         const fresh = body.log.filter((l) => !seen.has(l.id));

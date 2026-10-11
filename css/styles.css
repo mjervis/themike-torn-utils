@@ -15,6 +15,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -125,6 +126,35 @@ button.group-tag {
 button.group-tag.trade { color: var(--accent); border-color: var(--accent-2); }
 button.group-tag.item-override { border-style: dashed; }
 button.group-tag:hover { background: var(--panel); border-color: var(--accent); }
+
+.view-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); font-weight: 600; padding: 8px 14px; }
+.tab:hover { background: transparent; color: var(--text); }
+.tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+
+.file-btn { display: inline-block; font-weight: 500; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+.file-btn:hover { border-color: var(--accent); }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.chart-card { margin: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.chart-card figcaption { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.chart-box { position: relative; min-height: 60px; color: var(--muted); }
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .zero { stroke: var(--muted); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.chart .crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart rect:focus { outline: none; }
+.chart-box:focus-within { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.chart-tip { position: absolute; top: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; pointer-events: none; display: flex; flex-direction: column; font-size: 12px; white-space: nowrap; }
+.chart-tip strong { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+.chart-tip span { color: var(--muted); }
+.section-title { font-size: 14px; margin: 8px 0; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.daily { margin-top: 14px; }
+.daily summary { cursor: pointer; color: var(--muted); }
+.tag.found { color: var(--pos); border-color: var(--pos); }
 
 .footnote { color: var(--muted); font-size: 12px; }
 .foot { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
