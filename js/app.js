@@ -1,8 +1,14 @@
 import { createClient } from './api.js';
 import {
-  saleRoutes, isPurchaseLogTitle, isDefaultPurchaseLog,
+  saleRoutes, isPurchaseLogTitle, isDefaultPurchaseLog, isFindLogTitle, isDefaultFindLog,
   lotsByItem, costBasis, profit, breakEven,
 } from './costing.js';
+import { openDb, STORES } from './db.js';
+import {
+  keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory,
+  syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor,
+} from './sync.js';
+import { buildSnapshot, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart } from './history.js';
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -20,6 +26,10 @@ const store = {
 // ---------- state ----------
 const state = {
   client: null,
+  db: null,                // IndexedDB (or in-memory fallback), opened at start-up
+  player: null,            // { id, name } of the key owner; saved data is kept per player
+  snapshots: [],
+  findTypeIds: new Set(),
   catalog: new Map(),      // itemId -> TornItem
   logTypes: [],            // [{id, title}]
   holdings: [],            // [{id, name, qty, equipped}]
@@ -47,6 +57,8 @@ const settings = {
       view: document.querySelector('input[name=view]:checked').value,
       tradeTypes: [...document.querySelectorAll('#trade-types input:checked')].map((i) => i.value),
       selectedLogs: [...document.querySelectorAll('#log-types input:checked')].map((i) => Number(i.value)),
+      selectedFinds: [...document.querySelectorAll('#find-types input:checked')].map((i) => Number(i.value)),
+      range: document.querySelector('input[name=range]:checked').value,
     };
   },
   save() {
@@ -65,6 +77,8 @@ const settings = {
     if (r) r.checked = true;
     const v = document.querySelector(`input[name=view][value=${s.view}]`);
     if (v) v.checked = true;
+    const rg = document.querySelector(`input[name=range][value="${s.range}"]`);
+    if (rg) rg.checked = true;
   },
 };
 
@@ -98,57 +112,69 @@ async function load() {
   const btn = $('#load-btn');
   btn.disabled = true;
   try {
-    status('Loading item catalogue…');
+    const force = settings.read().bypassCache;
+    status('Checking your key…');
     // Sequential, so a bad key costs a single request rather than several.
-    const items = await state.client.items();
-    const logTypes = await state.client.logTypes();
-    state.catalog = new Map(items.map((i) => [i.id, i]));
-    state.logTypes = logTypes;
+    state.player = await identify(state.db, state.client, await keyFingerprint(key));
+    state.snapshots = await savedSnapshots(state.db, state.player.id);
+    status('Loading item catalogue…');
+    const catalog = await loadCatalog(state.db, state.client, { force });
+    const logTypes = await loadLogTypes(state.db, state.client);
+    state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
+    state.logTypes = logTypes.value;
     renderLogTypes();
 
     status('Loading inventory…');
-    const inv = await state.client.inventory({
-      bypassCache: settings.read().bypassCache,
+    const inv = await loadInventory(state.db, state.client, state.player.id, {
+      force,
       onCategory: (cat, i, n) => status(`Loading inventory… ${cat} (${i}/${n})`),
     });
-    state.inventoryAt = inv.timestamp;
-    state.holdings = aggregate(inv.items);
+    state.inventoryAt = inv.at;
+    state.holdings = aggregate(inv.value.items);
 
     const s = settings.read();
     if (!s.selectedLogs.length) throw new Error('No purchase log types selected in Settings.');
-    status('Reading purchase logs…');
-    const logs = await state.client.logs(s.selectedLogs, {
+    state.findTypeIds = new Set(s.selectedFinds);
+    const synced = await syncLogs(state.db, state.client, state.player.id, [...s.selectedLogs, ...s.selectedFinds], {
       maxPages: s.logPages,
-      onPage: (n, p) => status(`Reading purchase logs… ${n} found (page ${p}/${s.logPages})`),
+      onProgress: status,
     });
-    state.rawLogs = new Map(logs.map((l) => [l.id, l]));
-    state.lots = lotsByItem(logs);
+    applyLogs(synced.logs);
 
     $('#tos').open = false;
     $('#results').hidden = false;
+    $('#bypass-cache').checked = false;
     settings.save();
 
     if (s.priceSource === 'lowest') await refreshLowest();
-    const oldest = logs.length ? date(logs[logs.length - 1].timestamp) : null;
-    status(`Loaded ${state.holdings.length} items and ${logs.length} purchase logs${oldest ? ` (back to ${oldest})` : ''}. ` +
-      `Inventory as of ${state.inventoryAt ? date(state.inventoryAt) : 'now'}.`);
+    await saveSnapshot();
+    await renderSavedSummary();
+
+    const ago = (t) => (Date.now() / 1000 - t < 90 ? 'just now' : `${Math.round((Date.now() / 1000 - t) / 60)} min ago`);
+    const calls = state.client.calls;
+    status(`${state.player.name} · inventory ${inv.fromCache ? `saved ${ago(inv.at)}` : 'refreshed'} · prices ${catalog.fromCache ? `saved ${ago(catalog.at)}` : 'refreshed'} · ` +
+      `${synced.added} new log${synced.added === 1 ? '' : 's'} (${synced.logs.length} saved) · ${calls} API call${calls === 1 ? '' : 's'} this load.`);
     render();
   } catch (err) {
-    console.error(err);
-    if (err.deadKey) {
-      // Torn ToS: stop using invalid or disabled keys straight away.
-      state.rejectedKeys.add(key);
-      state.client = null;
-      store.del('key');
-      $('#remember-key').checked = false;
-    }
-    const hint = err.deadKey ? ' — the key has been forgotten and won\'t be used again.'
-      : err.code === 16 ? ' — the key needs access to user → log (Full Access or the custom key above).'
-      : err.fatal ? ' — Torn asked us to stop for now; try again in a minute.' : '';
-    status(`${err.message}${hint}`, true);
+    reportError(err);
   } finally {
     btn.disabled = false;
   }
+}
+
+function reportError(err) {
+  console.error(err);
+  if (err.deadKey) {
+    // Torn ToS: stop using invalid or disabled keys straight away.
+    state.rejectedKeys.add($('#api-key').value.trim());
+    state.client = null;
+    store.del('key');
+    $('#remember-key').checked = false;
+  }
+  const hint = err.deadKey ? ' — the key has been forgotten and won\'t be used again.'
+    : err.code === 16 ? ' — the key needs access to user → log (Full Access or the custom key above).'
+    : err.fatal ? ' — Torn asked us to stop for now; try again in a minute.' : '';
+  status(`${err.message}${hint}`, true);
 }
 
 /** Combine inventory rows of the same item (stacks, uid'd weapons, etc.). */
@@ -162,6 +188,60 @@ function aggregate(items) {
     map.set(it.id, row);
   }
   return [...map.values()];
+}
+
+function applyLogs(logs) {
+  state.rawLogs = new Map(logs.map((l) => [l.id, l]));
+  state.lots = lotsByItem(logs, state.findTypeIds);
+}
+
+async function saveSnapshot() {
+  if (!state.holdings.length) return;
+  const snap = await saveSnapshotFor(state.db, state.player.id, buildSnapshot(buildRows()));
+  state.snapshots = [...state.snapshots.filter((x) => x.date !== snap.date), snap];
+}
+
+async function renderSavedSummary() {
+  if (!state.db) return;
+  $('#older-logs').disabled = true;
+  if (!state.player) {
+    $('#saved-summary').textContent = state.db.persistent
+      ? 'Load with your key to see what\'s saved for you.' : 'This browser isn\'t allowing storage, so nothing will be kept.';
+    return;
+  }
+  const s = settings.read();
+  const [logs, cov] = await Promise.all([
+    state.db.getAll(STORES.logs),
+    historyCoverage(state.db, state.player.id, [...s.selectedLogs, ...s.selectedFinds]),
+  ]);
+  const mine = logs.filter((l) => l.player === state.player.id).length;
+  const snaps = state.snapshots.map((x) => x.date).sort();
+  const parts = [
+    `Saved for ${state.player.name}: ${mine.toLocaleString('en-GB')} logs`,
+    cov.oldest ? `history back to ${date(cov.oldest)}${cov.complete ? ' (complete)' : ''}` : null,
+    snaps.length ? `${snaps.length} daily snapshot${snaps.length === 1 ? '' : 's'} since ${snaps[0]}` : null,
+    state.db.persistent ? null : 'this browser isn\'t allowing storage, so nothing will be kept',
+  ].filter(Boolean);
+  $('#saved-summary').textContent = parts.join(' · ') || 'Nothing saved yet.';
+  $('#older-logs').disabled = cov.complete || !state.client;
+}
+
+async function readOlderLogs() {
+  if (!state.client) return status('Load with your key first.', true);
+  const s = settings.read();
+  const ids = [...s.selectedLogs, ...s.selectedFinds];
+  $('#older-logs').disabled = true;
+  try {
+    const before = state.client.calls;
+    const { added, complete, logs } = await backfillOlder(state.db, state.client, state.player.id, ids, { maxPages: s.logPages, onProgress: status });
+    applyLogs(logs);
+    status(`Added ${added} older logs${complete ? ' — that\'s your full history' : ''} (${state.client.calls - before} API calls).`);
+    render();
+  } catch (err) {
+    reportError(err);
+  } finally {
+    await renderSavedSummary();
+  }
 }
 
 async function refreshLowest() {
@@ -182,6 +262,7 @@ async function refreshLowest() {
     }
     store.set('lowest', state.lowest);
     status(`Lowest listings updated for ${targets.length} items.`);
+    await saveSnapshot();
   } catch (err) {
     status(err.message, true);
   } finally {
@@ -219,6 +300,7 @@ function buildRows() {
       unitPrice: price,
       breakEven: breakEven(unitCost, fee),
       partial: !override && basis && basis.coveredQty < h.qty,
+      foundQty: override == null ? (basis?.lots ?? []).filter((l) => l.kind === 'find').reduce((t, l) => t + (l.used ?? l.qty), 0) : 0,
       ...p,
     };
   });
@@ -255,13 +337,17 @@ function filteredRows() {
 
 // ---------- rendering ----------
 function renderLogTypes() {
-  const saved = store.get('settings', null)?.selectedLogs;
-  const candidates = state.logTypes.filter((t) => isPurchaseLogTitle(t.title))
-    .sort((a, b) => a.title.localeCompare(b.title));
-  $('#log-types').innerHTML = candidates.map((t) => {
-    const checked = saved?.length ? saved.includes(t.id) : isDefaultPurchaseLog(t.title);
-    return `<label class="check"><input type="checkbox" value="${t.id}" ${checked ? 'checked' : ''}> ${esc(t.title)} <span class="muted">#${t.id}</span></label>`;
-  }).join('') || '<em>No purchase log types found.</em>';
+  const saved = store.get('settings', null);
+  const list = (el, match, isDefault, chosen, empty) => {
+    const candidates = state.logTypes.filter((t) => match(t.title)).sort((a, b) => a.title.localeCompare(b.title));
+    $(el).innerHTML = candidates.map((t) => {
+      const checked = chosen ? chosen.includes(t.id) : isDefault(t.title);
+      return `<label class="check"><input type="checkbox" value="${t.id}" ${checked ? 'checked' : ''}> ${esc(t.title)} <span class="muted">#${t.id}</span></label>`;
+    }).join('') || `<em>${empty}</em>`;
+  };
+  list('#log-types', isPurchaseLogTitle, isDefaultPurchaseLog, saved?.selectedLogs?.length ? saved.selectedLogs : null, 'No purchase log types found.');
+  // selectedFinds is undefined for anyone upgrading from before finds existed: use the defaults then.
+  list('#find-types', (t) => isFindLogTitle(t) && !isPurchaseLogTitle(t), isDefaultFindLog, saved?.selectedFinds ?? null, 'No find log types found.');
 }
 
 function renderRouteLabels() {
@@ -319,6 +405,8 @@ function renderTable(rows) {
       `<button type="button" class="group-tag ${r.group}${r.groupSource === 'item' ? ' item-override' : ''}" data-id="${r.id}" title="${esc(groupTitle)}">${r.group === 'trade' ? 'Trade' : 'Personal'}</button>`,
       r.equipped ? `<span class="tag">${r.equipped} equipped</span>` : '',
       !r.tradable ? '<span class="tag">untradeable</span>' : '',
+      r.foundQty && r.foundQty >= r.basis.coveredQty ? '<span class="tag found" title="Every unit counted came from crimes, finds or loot">found</span>'
+        : r.foundQty ? `<span class="tag found" title="Units counted at $0 because they were found">${r.foundQty} found</span>` : '',
       r.partial ? `<span class="tag warn" title="Purchases found for ${r.basis.coveredQty} of ${r.qty}">cost from ${r.basis.coveredQty}/${r.qty}</span>` : '',
       r.override != null ? '<span class="tag warn">manual cost</span>' : '',
     ].join(' ');
@@ -344,7 +432,7 @@ function detailRow(r) {
   const used = new Map((r.basis?.lots ?? []).map((l) => [`${l.logId}`, l.used ?? l.qty]));
   const lowest = state.lowest[r.id];
   const lotRows = lots.slice(0, 50).map((l) => `
-    <tr><td>${date(l.timestamp)}</td><td>${esc(l.title)}</td><td class="num">${money0.format(l.qty)}</td>
+    <tr><td>${date(l.timestamp)}</td><td>${l.kind === 'find' ? '<span class="tag found">found</span> ' : ''}${esc(l.title)}</td><td class="num">${money0.format(l.qty)}</td>
     <td class="num">${money(l.unitCost)}${l.approximate ? ' <span class="tag warn" title="Split from a multi-item total">≈</span>' : ''}</td>
     <td class="num">${used.has(`${l.logId}`) ? money0.format(used.get(`${l.logId}`)) : ''}</td></tr>`).join('');
   const raw = lots.slice(0, 5).map((l) => state.rawLogs.get(l.logId)).filter(Boolean);
@@ -352,7 +440,7 @@ function detailRow(r) {
     <tr class="detail"><td colspan="9">
       <div class="muted">Torn market value ${money(state.catalog.get(r.id)?.value?.market_price)}${lowest?.price ? ` · lowest listing ${money(lowest.price)} (${date(lowest.at)})` : ''}</div>
       ${lots.length ? `<table class="lots"><thead><tr><th>When</th><th>Source</th><th class="num">Qty</th><th class="num">Each</th><th class="num">Counted</th></tr></thead><tbody>${lotRows}</tbody></table>`
-        : '<p class="muted">No purchase logs found for this item. Type a cost into “Paid / unit” to include it.</p>'}
+        : '<p class="muted">No purchase or find logs for this item. Type a cost into “Paid / unit” to include it (0 if it was free).</p>'}
       <p class="muted">${esc(r.type ?? 'Unknown type')} · ${r.groupSource === 'item'
         ? `you moved this item to ${GROUPS[r.group].toLowerCase()} <button type="button" class="secondary clear-group" data-id="${r.id}">Use type default</button>`
         : `${GROUPS[r.group].toLowerCase()} by type default`}</p>
@@ -364,10 +452,125 @@ function detailRow(r) {
 function render() {
   if ($('#results').hidden) return;
   renderRouteLabels();
-  const rows = filteredRows();
-  renderCards(rows);
-  renderTable(rows);
+  const rows = filteredRows(); // also updates the group counts
+  const tab = state.tab ?? 'holdings';
+  document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
+  $('#holdings-view').hidden = tab !== 'holdings';
+  $('#history-view').hidden = tab !== 'history';
+  document.querySelectorAll('.holdings-only').forEach((e) => { e.hidden = tab !== 'holdings'; });
+  if (tab === 'holdings') {
+    renderCards(rows);
+    renderTable(rows);
+  } else {
+    renderHistory();
+  }
 }
+
+// ---------- history view ----------
+function historyFilter() {
+  const s = settings.read();
+  const rules = { tradeTypes: s.tradeTypes, itemOverrides: state.itemGroups };
+  const hideUnpriced = $('#hide-unpriced').checked;
+  return (it) => {
+    if (hideUnpriced && !it.price) return false;
+    return s.view === 'all' || classify(it.type ?? state.catalog.get(it.id)?.type, it.id, rules).group === s.view;
+  };
+}
+
+const dayLabel = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+function shortMoney(n) {
+  const a = Math.abs(n);
+  const f = a >= 1e9 ? `${+(a / 1e9).toFixed(1)}b` : a >= 1e6 ? `${+(a / 1e6).toFixed(1)}m` : a >= 1e3 ? `${+(a / 1e3).toFixed(0)}k` : `${a}`;
+  return (n < 0 ? '-$' : '$') + f;
+}
+const signed = (n) => `${n > 0 ? '+' : ''}${money(n)}`;
+
+function renderHistory() {
+  const s = settings.read();
+  const route = saleRoutes(s)[s.route];
+  const include = historyFilter();
+  const pts = series(state.snapshots, include, route.fee, s.range === 'all' ? null : Number(s.range));
+
+  lineChart($('#chart-value'), pts.map((p) => ({ label: dayLabel(p.date), value: p.value, t: Date.parse(p.date) })),
+    { fmt: money, shortFmt: shortMoney, ariaLabel: 'Market value by day' });
+  lineChart($('#chart-profit'), pts.map((p) => ({ label: dayLabel(p.date), value: p.profit, t: Date.parse(p.date) })),
+    { fmt: money, shortFmt: shortMoney, zeroLine: true, ariaLabel: 'Profit after fees by day' });
+  $('#profit-caption').textContent = `Profit after fees · ${route.label}`;
+
+  const latest = pts[pts.length - 1];
+  const now = Math.floor(Date.now() / 1000);
+  const delta = (daysBack) => {
+    const snap = snapshotOnOrBefore(state.snapshots, utcDate(now - daysBack * 86400));
+    if (!snap || !latest || snap.date === latest.date) return null;
+    const then = series([snap], include, route.fee)[0];
+    return { value: latest.value - then.value, profit: latest.profit - then.profit, date: snap.date };
+  };
+  const card = (title, d) => `<div class="card"><div class="label">${title}</div>${d
+    ? `<div class="value ${signClass(d.value)}">${signed(d.value)}</div><div class="sub">value · profit ${signed(d.profit)} · vs ${dayLabel(d.date)}</div>`
+    : '<div class="value muted">—</div><div class="sub">no snapshot that far back yet</div>'}</div>`;
+  $('#history-cards').innerHTML = `
+    <div class="card"><div class="label">Market value now</div><div class="value">${money(latest?.value)}</div><div class="sub">${latest ? `${latest.count} items · ${esc(viewLabel())}` : 'no snapshots yet'}</div></div>
+    ${card('Since yesterday', delta(1))}${card('Last 7 days', delta(7))}${card('Last 30 days', delta(30))}`;
+
+  const first = pts.length > 1 ? state.snapshots.find((x) => x.date === pts[0].date) : null;
+  const last = latest && state.snapshots.find((x) => x.date === latest.date);
+  const changes = first && last ? itemChanges(first, last, include) : [];
+  $('#changes-title').textContent = first ? `Changes since ${dayLabel(first.date)}` : 'Changes';
+  $('#changes-table tbody').innerHTML = changes.slice(0, 100).map((c) => `
+    <tr><td>${esc(c.name)}</td><td class="num">${money0.format(c.qtyBefore)}</td><td class="num">${money0.format(c.qtyAfter)}</td>
+    <td class="num">${money(c.priceBefore)}</td><td class="num">${money(c.priceAfter)}</td>
+    <td class="num ${signClass(c.valueDelta)}">${signed(c.valueDelta)}</td></tr>`).join('')
+    || `<tr><td colspan="6" class="muted">${pts.length < 2 ? 'Changes appear once there are snapshots from at least two days.' : 'No changes in this range.'}</td></tr>`;
+
+  $('#daily-table tbody').innerHTML = [...pts].reverse().map((p) => `
+    <tr><td>${p.date}</td><td class="num">${p.count}</td><td class="num">${money(p.value)}</td><td class="num">${money(p.paid)}</td>
+    <td class="num ${signClass(p.profit)}">${money(p.profit)}</td></tr>`).join('');
+}
+
+// ---------- backup ----------
+const LOCAL_KEYS = ['settings', 'overrides', 'itemGroups', 'lowest', 'sort'];
+
+async function exportBackup() {
+  const [logs, metaRows, snapshots] = await Promise.all([
+    state.db.getAll(STORES.logs), state.db.getAll(STORES.meta), state.db.getAll(STORES.snapshots),
+  ]);
+  const local = Object.fromEntries(LOCAL_KEYS.map((k) => [k, store.get(k, null)]));
+  // The API key is never included.
+  const backup = {
+    app: 'torn-inventory-profit', version: 1, exportedAt: new Date().toISOString(),
+    local, logs, snapshots, meta: metaRows.filter((m) => m.key.startsWith('logsync:')),
+  };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
+  a.download = `torn-inventory-backup-${utcDate(Math.floor(Date.now() / 1000))}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function importBackup(file) {
+  try {
+    const b = JSON.parse(await file.text());
+    if (b.app !== 'torn-inventory-profit') throw new Error('that file isn\'t a backup from this app');
+    const valid = (arr, key) => (Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object' && x[key] != null) : []);
+    const logs = valid(b.logs, 'id');
+    const snaps = valid(b.snapshots, 'date');
+    await state.db.putMany(STORES.logs, logs);
+    await state.db.putMany(STORES.snapshots, valid(snaps, 'key'));
+    await state.db.putMany(STORES.meta, valid(b.meta, 'key').filter((m) => String(m.key).startsWith('logsync:')));
+    for (const k of LOCAL_KEYS) if (b.local?.[k] != null) store.set(k, b.local[k]);
+    if (state.player) state.snapshots = await savedSnapshots(state.db, state.player.id);
+    state.overrides = store.get('overrides', {});
+    state.itemGroups = store.get('itemGroups', {});
+    state.lowest = store.get('lowest', {});
+    settings.restore();
+    renderTradeTypes();
+    status(`Backup restored: ${logs.length} logs and ${snaps.length} snapshots. Press Load to apply it.`);
+    await renderSavedSummary();
+  } catch (err) {
+    status(`Couldn't restore backup: ${err.message}`, true);
+  }
+}
+
 
 // ---------- events ----------
 $('#key-form').addEventListener('submit', (e) => { e.preventDefault(); load(); });
@@ -451,7 +654,16 @@ $('#price-source').addEventListener('change', async () => {
   if (needsFetch && state.client) await refreshLowest(); else render();
 });
 $('#refresh-prices').addEventListener('click', refreshLowest);
-$('#forget-btn').addEventListener('click', () => {
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
+document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
+$('#find-types').addEventListener('change', () => settings.save());
+$('#older-logs').addEventListener('click', readOlderLogs);
+$('#export-btn').addEventListener('click', exportBackup);
+$('#import-file').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
+$('#forget-btn').addEventListener('click', async () => {
+  await state.db?.clear();
+  state.snapshots = [];
+  state.player = null;
   try { Object.keys(localStorage).filter((k) => k.startsWith('tip.')).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   state.client = null;
   state.lowest = {};
@@ -461,12 +673,17 @@ $('#forget-btn').addEventListener('click', () => {
   $('#api-key').value = '';
   $('#remember-key').checked = false;
   $('#results').hidden = true;
-  status('Your key and all data saved by this page have been removed from this browser.');
+  status('Your key and all data saved by this page — logs, snapshots and settings — have been removed from this browser.');
+  renderSavedSummary();
 });
 
 // ---------- init ----------
 renderTradeTypes();
 settings.restore();
+openDb().then(async (db) => {
+  state.db = db;
+  await renderSavedSummary();
+});
 const savedKey = store.get('key', '');
 if (savedKey) {
   $('#api-key').value = savedKey;
