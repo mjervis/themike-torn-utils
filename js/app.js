@@ -3,6 +3,7 @@ import {
   saleRoutes, isPurchaseLogTitle, isDefaultPurchaseLog,
   lotsByItem, costBasis, profit, breakEven,
 } from './costing.js';
+import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -26,6 +27,7 @@ const state = {
   rawLogs: new Map(),      // logId -> log
   lowest: store.get('lowest', {}),        // itemId -> { price, at }
   overrides: store.get('overrides', {}),  // itemId -> unit cost
+  itemGroups: store.get('itemGroups', {}), // itemId -> 'trade' | 'personal' (overrides type default)
   expanded: new Set(),
   sort: store.get('sort', { key: 'profit', dir: 'desc' }),
   inventoryAt: null,
@@ -42,6 +44,8 @@ const settings = {
       priceSource: $('#price-source').value,
       bypassCache: $('#bypass-cache').checked,
       route: document.querySelector('input[name=route]:checked').value,
+      view: document.querySelector('input[name=view]:checked').value,
+      tradeTypes: [...document.querySelectorAll('#trade-types input:checked')].map((i) => i.value),
       selectedLogs: [...document.querySelectorAll('#log-types input:checked')].map((i) => Number(i.value)),
     };
   },
@@ -59,6 +63,8 @@ const settings = {
     $('#price-source').value = s.priceSource;
     const r = document.querySelector(`input[name=route][value=${s.route}]`);
     if (r) r.checked = true;
+    const v = document.querySelector(`input[name=view][value=${s.view}]`);
+    if (v) v.checked = true;
   },
 };
 
@@ -202,8 +208,10 @@ function buildRows() {
     const unitCost = override ?? basis?.unitCost ?? null;
     const price = unitPrice(h.id, s.priceSource);
     const p = profit({ qty: h.qty, unitCost, unitPrice: price, fee });
+    const { group, source } = classify(item?.type, h.id, { tradeTypes: s.tradeTypes, itemOverrides: state.itemGroups });
     return {
       ...h,
+      group, groupSource: source,
       image: item?.image,
       type: item?.type,
       tradable: item?.is_tradable ?? false,
@@ -220,7 +228,15 @@ function filteredRows() {
   const q = $('#filter').value.trim().toLowerCase();
   const hideUnpriced = $('#hide-unpriced').checked;
   const onlyCosted = $('#only-costed').checked;
-  const rows = buildRows().filter((r) =>
+  const view = settings.read().view;
+  const all = buildRows();
+  const visible = all.filter((r) => !hideUnpriced || (r.tradable && r.unitPrice));
+  $('#count-trade').textContent = visible.filter((r) => r.group === 'trade').length;
+  $('#count-personal').textContent = visible.filter((r) => r.group === 'personal').length;
+  $('#count-all').textContent = visible.length;
+
+  const rows = all.filter((r) =>
+    (view === 'all' || r.group === view) &&
     (!q || r.name.toLowerCase().includes(q) || (r.type ?? '').toLowerCase().includes(q)) &&
     (!hideUnpriced || (r.tradable && r.unitPrice)) &&
     (!onlyCosted || r.unitCost != null));
@@ -272,10 +288,21 @@ function renderCards(rows) {
   }).join('');
 
   $('#cards').innerHTML = `
-    <div class="card"><div class="label">Market value</div><div class="value">${money(totalValue)}</div><div class="sub">${rows.length} items shown</div></div>
+    <div class="card"><div class="label">Market value</div><div class="value">${money(totalValue)}</div><div class="sub">${rows.length} items · ${esc(viewLabel())}</div></div>
     <div class="card"><div class="label">Paid (costed items)</div><div class="value">${money(paid)}</div><div class="sub">${costed.length} of ${rows.length} have a cost</div></div>
     <div class="card"><div class="label">Net if sold (costed)</div><div class="value">${money(netCosted)}</div><div class="sub">ROI ${pct(paid ? prof / paid : null)}</div></div>
     ${byRoute}`;
+}
+
+function viewLabel() {
+  const v = settings.read().view;
+  return v === 'all' ? 'all items' : GROUPS[v].toLowerCase();
+}
+
+function renderTradeTypes() {
+  const selected = store.get('settings', null)?.tradeTypes ?? DEFAULT_TRADE_TYPES;
+  $('#trade-types').innerHTML = ITEM_TYPES.map((t) =>
+    `<label class="check"><input type="checkbox" value="${esc(t)}" ${selected.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('');
 }
 
 function renderTable(rows) {
@@ -285,7 +312,11 @@ function renderTable(rows) {
   });
 
   $('#table tbody').innerHTML = rows.map((r) => {
+    const groupTitle = r.groupSource === 'item'
+      ? 'You set this item\'s group. Click to switch.'
+      : `${r.type ?? 'Unknown type'} items default to ${GROUPS[r.group].toLowerCase()}. Click to switch this item.`;
     const tags = [
+      `<button type="button" class="group-tag ${r.group}${r.groupSource === 'item' ? ' item-override' : ''}" data-id="${r.id}" title="${esc(groupTitle)}">${r.group === 'trade' ? 'Trade' : 'Personal'}</button>`,
       r.equipped ? `<span class="tag">${r.equipped} equipped</span>` : '',
       !r.tradable ? '<span class="tag">untradeable</span>' : '',
       r.partial ? `<span class="tag warn" title="Purchases found for ${r.basis.coveredQty} of ${r.qty}">cost from ${r.basis.coveredQty}/${r.qty}</span>` : '',
@@ -322,6 +353,9 @@ function detailRow(r) {
       <div class="muted">Torn market value ${money(state.catalog.get(r.id)?.value?.market_price)}${lowest?.price ? ` · lowest listing ${money(lowest.price)} (${date(lowest.at)})` : ''}</div>
       ${lots.length ? `<table class="lots"><thead><tr><th>When</th><th>Source</th><th class="num">Qty</th><th class="num">Each</th><th class="num">Counted</th></tr></thead><tbody>${lotRows}</tbody></table>`
         : '<p class="muted">No purchase logs found for this item. Type a cost into “Paid / unit” to include it.</p>'}
+      <p class="muted">${esc(r.type ?? 'Unknown type')} · ${r.groupSource === 'item'
+        ? `you moved this item to ${GROUPS[r.group].toLowerCase()} <button type="button" class="secondary clear-group" data-id="${r.id}">Use type default</button>`
+        : `${GROUPS[r.group].toLowerCase()} by type default`}</p>
       ${r.override != null ? `<button type="button" class="secondary clear-override" data-id="${r.id}">Clear manual cost</button>` : ''}
       ${raw.length ? `<details class="raw"><summary class="muted">Raw log data</summary><pre>${esc(JSON.stringify(raw, null, 2))}</pre></details>` : ''}
     </td></tr>`;
@@ -350,6 +384,14 @@ $('#table thead').addEventListener('click', (e) => {
 
 $('#table tbody').addEventListener('click', (e) => {
   if (e.target.closest('input')) return;
+  const groupBtn = e.target.closest('.group-tag');
+  if (groupBtn) return toggleGroup(Number(groupBtn.dataset.id));
+  const clearGroup = e.target.closest('.clear-group');
+  if (clearGroup) {
+    delete state.itemGroups[clearGroup.dataset.id];
+    store.set('itemGroups', state.itemGroups);
+    return render();
+  }
   const clear = e.target.closest('.clear-override');
   if (clear) {
     delete state.overrides[clear.dataset.id];
@@ -362,6 +404,18 @@ $('#table tbody').addEventListener('click', (e) => {
   if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
   render();
 });
+
+/** Move one item to the other group; drop the override if that matches its type default. */
+function toggleGroup(id) {
+  const s = settings.read();
+  const type = state.catalog.get(id)?.type;
+  const current = classify(type, id, { tradeTypes: s.tradeTypes, itemOverrides: state.itemGroups }).group;
+  const next = current === 'trade' ? 'personal' : 'trade';
+  if (classify(type, id, { tradeTypes: s.tradeTypes }).group === next) delete state.itemGroups[id];
+  else state.itemGroups[id] = next;
+  store.set('itemGroups', state.itemGroups);
+  render();
+}
 
 $('#table tbody').addEventListener('change', (e) => {
   const input = e.target.closest('.cost-input');
@@ -377,7 +431,18 @@ $('#table tbody').addEventListener('change', (e) => {
 for (const sel of ['#filter', '#hide-unpriced', '#only-costed', '#market-fee', '#anon-fee', '#cost-method']) {
   $(sel).addEventListener('input', () => { settings.save(); render(); });
 }
-document.querySelectorAll('input[name=route]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
+document.querySelectorAll('input[name=route], input[name=view]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
+$('#trade-types').addEventListener('change', () => { settings.save(); render(); });
+$('#reset-trade-types').addEventListener('click', () => {
+  document.querySelectorAll('#trade-types input').forEach((i) => { i.checked = DEFAULT_TRADE_TYPES.includes(i.value); });
+  settings.save();
+  render();
+});
+$('#clear-item-groups').addEventListener('click', () => {
+  state.itemGroups = {};
+  store.del('itemGroups');
+  render();
+});
 $('#log-types').addEventListener('change', () => settings.save());
 $('#log-pages').addEventListener('change', () => settings.save());
 $('#price-source').addEventListener('change', async () => {
@@ -391,6 +456,8 @@ $('#forget-btn').addEventListener('click', () => {
   state.client = null;
   state.lowest = {};
   state.overrides = {};
+  state.itemGroups = {};
+  renderTradeTypes();
   $('#api-key').value = '';
   $('#remember-key').checked = false;
   $('#results').hidden = true;
@@ -398,6 +465,7 @@ $('#forget-btn').addEventListener('click', () => {
 });
 
 // ---------- init ----------
+renderTradeTypes();
 settings.restore();
 const savedKey = store.get('key', '');
 if (savedKey) {

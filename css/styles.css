@@ -108,6 +108,16 @@ tr.detail td { background: #1a1d23; white-space: normal; }
 .lots td, .lots th { padding: 3px 12px 3px 0; border: 0; }
 details.raw pre { max-height: 240px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 6px; font-size: 12px; }
 
+.hint { color: var(--muted); margin: 0 0 8px; font-size: 13px; }
+.count { color: var(--muted); font-size: 12px; }
+button.group-tag {
+  font: inherit; font-size: 11px; font-weight: 500; padding: 0 6px; border-radius: 4px; cursor: pointer;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+}
+button.group-tag.trade { color: var(--accent); border-color: var(--accent-2); }
+button.group-tag.item-override { border-style: dashed; }
+button.group-tag:hover { background: var(--panel); border-color: var(--accent); }
+
 .footnote { color: var(--muted); font-size: 12px; }
 .foot { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
 

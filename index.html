@@ -87,6 +87,13 @@
         <label class="check"><input id="bypass-cache" type="checkbox"> Bypass inventory cache (normally 1 hour)</label>
       </div>
       <fieldset>
+        <legend>Item types counted as trade goods</legend>
+        <p class="hint">Everything else is treated as personal use. Click the Trade / Personal tag on any row to override a single item.</p>
+        <div id="trade-types" class="log-types"></div>
+        <p><button type="button" id="reset-trade-types" class="secondary">Reset to typical trade goods</button>
+          <button type="button" id="clear-item-groups" class="secondary">Clear per-item overrides</button></p>
+      </fieldset>
+      <fieldset>
         <legend>Purchase log types to read</legend>
         <div id="log-types" class="log-types"><em>Load once to see available log types.</em></div>
       </fieldset>
@@ -95,6 +102,14 @@
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <section id="results" hidden>
+      <div class="toolbar">
+        <div class="routes" role="radiogroup" aria-label="Item group">
+          <span>Show:</span>
+          <label><input type="radio" name="view" value="trade" checked> Trade goods <span class="count" id="count-trade"></span></label>
+          <label><input type="radio" name="view" value="personal"> Personal use <span class="count" id="count-personal"></span></label>
+          <label><input type="radio" name="view" value="all"> All <span class="count" id="count-all"></span></label>
+        </div>
+      </div>
       <div class="toolbar">
         <div class="routes" role="radiogroup" aria-label="Sale route">
           <span>Sell via:</span>
@@ -130,7 +145,7 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="footnote">Click a row to see the purchases used for its cost. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
+      <p class="footnote">Click a row to see the purchases used for its cost. Click its Trade / Personal tag to move it between groups. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
     </section>
   </main>
 

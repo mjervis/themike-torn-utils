@@ -18,6 +18,8 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 
 **Cost basis.** By default the app assumes you sold or used your oldest stock first, so the units you still hold are costed from your *most recent* purchases. You can switch to a simple average of all purchases. Items with no purchase log (gifts, crime finds, older than the scanned logs) can have a cost typed in by hand; overrides are saved in the browser.
 
+**Trade goods vs personal use.** Holdings are split into two groups, with *Trade goods* shown by default. The default trade types are the usual Torn resale stock: plushies, flowers, drugs, artifacts, special items and supply packs. Everything else (boosters, candy, energy drinks, alcohol, medical, weapons, armour…) counts as personal use. Change the type list in Settings, or click an item's Trade / Personal tag to move just that item.
+
 **Fees.** Choose the sale route at the top of the results:
 
 - *Direct / trade* — no fee
