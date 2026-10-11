@@ -34,7 +34,7 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 | Item catalogue & market values | 15 minutes | 1 call |
 | Log type list | 7 days | 1 call |
 
-A first load is ~30 calls; a repeat load is typically **1**. The Energy page reads gym logs back to the start of your faction's week the first time, then only new ones. “Force refresh” in Settings ignores the saved inventory and prices for one load. “Read older log history” walks further back than the first scan.
+A first load is ~30 calls; a repeat load is typically **1**. The Energy page reads gym logs back to the start of your faction's week the first time, then only new ones. On opening the page, the last player's saved inventory profit data is shown straight away, with no key or API calls; **Update** fetches fresh inventory and prices (as does “Force refresh” in Settings for one load). “Read older log history” walks further back than the first scan.
 
 **Cost basis.** Purchases and finds form one timeline; finds count as **$0**. By default the app assumes you sold or used your oldest stock first, so the units you still hold are costed from your *most recent* acquisitions — e.g. 10 Dahlias bought abroad at $3,000 then 2 found in a crime, holding 12, costs $2,500 each. You can switch to a simple average of everything. Items with no log at all (gifts, trades) can have a cost typed in by hand.
 
