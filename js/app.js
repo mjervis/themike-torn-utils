@@ -3,10 +3,10 @@ import {
   saleRoutes, isPurchaseLogTitle, isDefaultPurchaseLog, isFindLogTitle, isDefaultFindLog,
   lotsByItem, costBasis, profit, breakEven,
 } from './costing.js';
-import { openDb, STORES } from './db.js';
+import { openDb, STORES, meta } from './db.js';
 import {
   keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory,
-  syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor,
+  syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor, savedLogs,
 } from './sync.js';
 import { buildSnapshot, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart } from './history.js';
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
@@ -114,6 +114,8 @@ function connect() {
     return null;
   }
   if ($('#remember-key').checked) store.set('key', key); else store.del('key');
+  // The key may belong to someone other than the player whose saved data is on screen.
+  if (key !== state.key) state.player = null;
   state.key = key;
   state.client = createClient(key);
   return state.client;
@@ -151,16 +153,18 @@ async function ensureLogTypes() {
   return r;
 }
 
-async function load() {
+/** `force` skips the saved inventory and prices (Update button, or the force-refresh setting). */
+async function load({ force = settings.read().bypassCache } = {}) {
   if (!state.client) return;
-  const btn = $('#load-btn');
-  btn.disabled = true;
+  const btns = [$('#load-btn'), $('#inv-update')];
+  btns.forEach((b) => { b.disabled = true; });
   try {
     await dbReady;
-    const force = settings.read().bypassCache;
     status('Checking your key…');
     // Sequential, so a bad key costs a single request rather than several.
     state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
+    // Remembered (id and name only) so saved data can be shown on the next visit before a key is entered.
+    store.set('player', { id: state.player.id, name: state.player.name });
     state.snapshots = await savedSnapshots(state.db, state.player.id);
     status('Loading item catalogue…');
     const catalog = await ensureCatalog({ force });
@@ -172,6 +176,7 @@ async function load() {
       onCategory: (cat, i, n) => status(`Loading inventory… ${cat} (${i}/${n})`),
     });
     state.inventoryAt = inv.at;
+    state.pricesAt = catalog.at;
     state.holdings = aggregate(inv.value.items);
 
     const s = settings.read();
@@ -192,7 +197,6 @@ async function load() {
     await saveSnapshot();
     await renderSavedSummary();
 
-    const ago = (t) => (Date.now() / 1000 - t < 90 ? 'just now' : `${Math.round((Date.now() / 1000 - t) / 60)} min ago`);
     const calls = state.client.calls;
     status(`${state.player.name} · inventory ${inv.fromCache ? `saved ${ago(inv.at)}` : 'refreshed'} · prices ${catalog.fromCache ? `saved ${ago(catalog.at)}` : 'refreshed'} · ` +
       `${synced.added} new log${synced.added === 1 ? '' : 's'} (${synced.logs.length} saved) · ${calls} API call${calls === 1 ? '' : 's'} this load.`);
@@ -200,8 +204,45 @@ async function load() {
   } catch (err) {
     reportError(err);
   } finally {
-    btn.disabled = false;
+    btns.forEach((b) => { b.disabled = false; });
   }
+}
+
+function ago(t) {
+  const mins = Math.round((Date.now() / 1000 - t) / 60);
+  if (mins < 2) return 'just now';
+  if (mins < 120) return `${mins} min ago`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours ago`;
+  return `${Math.round(mins / 1440)} days ago`;
+}
+
+/**
+ * Show what's saved in this browser for the last player who loaded, without a key or any API
+ * calls. Update (or Load) then brings it up to date.
+ */
+async function restoreSaved() {
+  const last = store.get('player', null);
+  if (!last || state.client) return;
+  await dbReady;
+  const [catalog, logTypes, inv] = await Promise.all([
+    meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
+  ]);
+  if (!catalog || !inv || state.client) return; // nothing to show yet, or a load started meanwhile
+  state.player = last;
+  state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
+  if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
+  state.inventoryAt = inv.at;
+  state.pricesAt = catalog.at;
+  state.holdings = aggregate(inv.value.items);
+  state.snapshots = await savedSnapshots(state.db, last.id);
+  const s = settings.read();
+  state.findTypeIds = new Set(s.selectedFinds);
+  applyLogs(await savedLogs(state.db, last.id, [...s.selectedLogs, ...s.selectedFinds]));
+  $('#tos').open = false;
+  $('#results').hidden = false;
+  await renderSavedSummary();
+  render();
+  if (currentPage() === 'inventory') status(`Showing ${last.name}'s saved data. Press Update to get the latest from Torn.`);
 }
 
 /** Combine inventory rows of the same item (stacks, uid'd weapons, etc.). */
@@ -493,6 +534,8 @@ function detailRow(r) {
 
 function render() {
   if ($('#results').hidden) return;
+  $('#inv-asof').textContent = state.inventoryAt
+    ? `Inventory from ${date(state.inventoryAt)} (${ago(state.inventoryAt)}) · prices ${ago(state.pricesAt)}` : '';
   renderRouteLabels();
   const rows = filteredRows(); // also updates the group counts
   const tab = state.tab ?? 'holdings';
@@ -730,6 +773,13 @@ $('#price-source').addEventListener('change', async () => {
   if (needsFetch && state.client) await refreshLowest(); else render();
 });
 $('#refresh-prices').addEventListener('click', refreshLowest);
+$('#inv-update').addEventListener('click', () => {
+  if (!state.client && !connect()) {
+    if (!$('#api-key').value.trim()) status('Enter your API key above to get the latest from Torn.', true);
+    return $('#api-key').focus();
+  }
+  load({ force: true });
+});
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
 document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
 $('#find-types').addEventListener('change', () => settings.save());
@@ -769,3 +819,4 @@ if (savedKey) {
   $('#remember-key').checked = true;
 }
 showPage();
+restoreSaved().catch((err) => console.warn('Couldn\'t show saved data:', err));
