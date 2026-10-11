@@ -28,8 +28,13 @@ export function isFindLogTitle(title) {
     !/\b(buy|sell|money|cash|points?|nerve|energy|exp|experience|skill|fail(ed|ure)?|lost|jail|hospital|bounty)\b/i.test(title);
 }
 
+// Logs where items go *out* (used in a crime, dumped, lost) or nothing usable comes in.
+const NOT_A_FIND = /\b(use|uses|used|add|adds|remove|lose|loses|retrieve|none|inquire|unlock|toggle|read|guess|reputation|initiate|plan|join|leave|cancel|spawn|migration|ammo|tokens?|credits?|stats?|strength|speed|defense|dexterity|endurance|happy|respect|property|key|ornament)\b/i;
+
+/** Ticked by default: logs that clearly hand you an item — finds, loot, item gains and item rewards. */
 export function isDefaultFindLog(title) {
-  return isFindLogTitle(title) && /(item|find|found|loot|dump)/i.test(title);
+  return isFindLogTitle(title) && !NOT_A_FIND.test(title) &&
+    /\b(find|found|loot|item gain|gain items?|reward item)\b/i.test(title);
 }
 
 const num = (v) => {

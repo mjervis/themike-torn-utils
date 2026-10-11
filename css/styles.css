@@ -154,6 +154,8 @@ button.group-tag:hover { background: var(--panel); border-color: var(--accent); 
 .section-title { font-size: 14px; margin: 8px 0; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .daily { margin-top: 14px; }
 .daily summary { cursor: pointer; color: var(--muted); }
+.log-count { color: var(--muted); font-size: 12px; }
+.log-count.none { color: var(--warn); }
 .tag.found { color: var(--pos); border-color: var(--pos); }
 
 .footnote { color: var(--muted); font-size: 12px; }

@@ -32,6 +32,8 @@ const INVENTORY_CATEGORIES = [
   'Melee', 'Other', 'Plushie', 'Primary', 'Secondary', 'Special', 'Supply Pack', 'Temporary', 'Tool',
 ];
 
+const LOG_IDS_PER_CALL = 5;
+
 async function throttle() {
   const wait = lastCall + MIN_GAP_MS - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -51,6 +53,8 @@ export function createClient(key) {
     }
     url.searchParams.delete('key'); // pagination links may embed one; we use the header
     if (!url.searchParams.has('comment')) url.searchParams.set('comment', COMMENT);
+    // The spec sends lists as plain comma-separated values (e.g. log=105,4900); keep the commas literal.
+    url.search = url.searchParams.toString().replace(/%2C/gi, ',');
 
     await throttle();
     calls++;
@@ -125,16 +129,22 @@ export function createClient(key) {
      * Starts at `to` (default: now) and stops at `from` (unix seconds) or after `maxPages` pages of 100.
      */
     async logs(logIds, { from, to: before, maxPages = 20, onPage } = {}) {
+      // Torn returned nothing (and no error) for ~40 ids in one request, so ask in small batches.
       const seen = new Map();
-      let to = before;
-      for (let page = 0; page < maxPages; page++) {
-        const body = await get('/user/log', { log: logIds.join(','), limit: 100, from, to });
-        const fresh = body.log.filter((l) => !seen.has(l.id));
-        for (const l of fresh) seen.set(l.id, l);
-        onPage?.(seen.size, page + 1);
-        if (body.log.length < 100 || fresh.length === 0) break;
-        // Step back to the oldest timestamp seen; duplicates in the same second are de-duplicated above.
-        to = Math.min(...body.log.map((l) => l.timestamp));
+      let page = 0;
+      for (let i = 0; i < logIds.length; i += LOG_IDS_PER_CALL) {
+        const batch = logIds.slice(i, i + LOG_IDS_PER_CALL);
+        let to = before;
+        for (let p = 0; p < maxPages; p++) {
+          const body = await get('/user/log', { log: batch.join(','), limit: 100, from, to });
+          const list = Array.isArray(body.log) ? body.log : Object.values(body.log ?? {});
+          const fresh = list.filter((l) => !seen.has(l.id));
+          for (const l of fresh) seen.set(l.id, l);
+          onPage?.(seen.size, ++page);
+          if (list.length < 100 || fresh.length === 0) break;
+          // Step back to the oldest timestamp seen; duplicates in the same second are de-duplicated above.
+          to = Math.min(...list.map((l) => l.timestamp));
+        }
       }
       return [...seen.values()].sort((a, b) => b.timestamp - a.timestamp);
     },

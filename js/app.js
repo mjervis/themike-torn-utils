@@ -14,6 +14,9 @@ import { createEnergyPage } from './energy-page.js';
 
 const $ = (sel) => document.querySelector(sel);
 
+// Bump when the default free-item sources change, so earlier saved choices are replaced once.
+const FINDS_VERSION = 2;
+
 // ---------- storage (wrapped: private windows can throw) ----------
 const store = {
   get(k, fallback) {
@@ -65,7 +68,7 @@ const settings = {
   },
   save() {
     const s = this.read();
-    store.set('settings', { ...s, bypassCache: false });
+    store.set('settings', { ...s, bypassCache: false, findsVersion: FINDS_VERSION });
   },
   restore() {
     const s = store.get('settings', null);
@@ -217,6 +220,7 @@ function aggregate(items) {
 function applyLogs(logs) {
   state.rawLogs = new Map(logs.map((l) => [l.id, l]));
   state.lots = lotsByItem(logs, state.findTypeIds);
+  renderLogCounts();
 }
 
 async function saveSnapshot() {
@@ -366,12 +370,26 @@ function renderLogTypes() {
     const candidates = state.logTypes.filter((t) => match(t.title)).sort((a, b) => a.title.localeCompare(b.title));
     $(el).innerHTML = candidates.map((t) => {
       const checked = chosen ? chosen.includes(t.id) : isDefault(t.title);
-      return `<label class="check"><input type="checkbox" value="${t.id}" ${checked ? 'checked' : ''}> ${esc(t.title)} <span class="muted">#${t.id}</span></label>`;
+      return `<label class="check"><input type="checkbox" value="${t.id}" ${checked ? 'checked' : ''}> ${esc(t.title)} <span class="muted">#${t.id}</span> <span class="log-count" data-log-type="${t.id}"></span></label>`;
     }).join('') || `<em>${empty}</em>`;
   };
   list('#log-types', isPurchaseLogTitle, isDefaultPurchaseLog, saved?.selectedLogs?.length ? saved.selectedLogs : null, 'No purchase log types found.');
-  // selectedFinds is undefined for anyone upgrading from before finds existed: use the defaults then.
-  list('#find-types', (t) => isFindLogTitle(t) && !isPurchaseLogTitle(t), isDefaultFindLog, saved?.selectedFinds ?? null, 'No find log types found.');
+  // Saved find choices from an older version (or none at all) fall back to the current defaults.
+  const finds = saved?.findsVersion === FINDS_VERSION ? saved.selectedFinds : null;
+  list('#find-types', (t) => isFindLogTitle(t) && !isPurchaseLogTitle(t), isDefaultFindLog, finds, 'No find log types found.');
+  renderLogCounts();
+}
+
+/** Show how many saved logs each log type has, so it's obvious when a type isn't coming through. */
+function renderLogCounts() {
+  const counts = new Map();
+  for (const l of state.rawLogs.values()) counts.set(l.details?.id, (counts.get(l.details?.id) ?? 0) + 1);
+  document.querySelectorAll('.log-count').forEach((el) => {
+    const input = el.closest('label').querySelector('input');
+    const n = counts.get(Number(el.dataset.logType)) ?? 0;
+    el.textContent = input.checked && state.player ? `· ${n.toLocaleString('en-GB')} saved` : '';
+    el.classList.toggle('none', input.checked && state.player && n === 0);
+  });
 }
 
 function renderRouteLabels() {

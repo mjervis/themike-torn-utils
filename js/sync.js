@@ -54,7 +54,9 @@ export function loadInventory(db, client, player, { force, onCategory, now } = {
     () => client.inventory({ bypassCache: force, onCategory }), { force, now });
 }
 
-const syncKey = (player, typeId) => `logsync:${player}:${typeId}`;
+// v2: the first release asked for every log type in one request, got nothing back from Torn and
+// recorded that as a complete (empty) history. A new key version makes those types rescan.
+const syncKey = (player, typeId) => `logsync:v2:${player}:${typeId}`;
 
 async function syncStates(db, player, ids) {
   return Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await meta.get(db, syncKey(player, id))])));
@@ -86,7 +88,7 @@ export async function syncLogs(db, client, player, typeIds, { maxPages = 20, onP
   if (fresh.length) {
     const logs = await client.logs(fresh, {
       maxPages,
-      onPage: (n, p) => onProgress?.(`Reading log history… ${n} found (page ${p}/${maxPages})`),
+      onPage: (n, p) => onProgress?.(`Reading log history… ${n} found (request ${p})`),
     });
     added += await saveNew(db, player, logs);
     const oldest = logs.length ? Math.min(...logs.map((l) => l.timestamp)) : now;
@@ -108,7 +110,7 @@ export async function backfillOlder(db, client, player, typeIds, { maxPages = 20
   const to = Math.min(...todo.map((id) => states[id].oldest));
   const logs = await client.logs(todo, {
     to, maxPages,
-    onPage: (n, p) => onProgress?.(`Reading older logs… ${n} found (page ${p}/${maxPages})`),
+    onPage: (n, p) => onProgress?.(`Reading older logs… ${n} found (request ${p})`),
   });
   const added = await saveNew(db, player, logs);
   const oldest = logs.length ? Math.min(...logs.map((l) => l.timestamp)) : to;

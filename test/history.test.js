@@ -54,6 +54,19 @@ test('extractItems understands nested reward shapes', () => {
   assert.deepEqual(extractItems({ loot: { 7: 2 } }), [{ id: 7, qty: 2 }]);
 });
 
+test('default find sources only include logs that hand you an item', () => {
+  for (const t of ['Attack receive loot', 'City item find', 'Dump find', 'Dump find (legacy)', 'Crime success item gain',
+    'Crime success item gain (new)', 'Christmas town find item', 'Company special gain item', 'Job special gain item']) {
+    assert.ok(isDefaultFindLog(t), t);
+  }
+  for (const t of ['Crime use items for arson', 'Crime item add spray can', 'Crime item remove component', 'Dump add',
+    'Dump find none', 'Faction organized crimes lose items', 'Faction organized crimes use items',
+    'Crime item retrieve spy camera and card skimmer', 'Crime unlock item for arson', 'Company special gain strength',
+    'Crime success casino token gain', 'Christmas town find key']) {
+    assert.ok(!isDefaultFindLog(t), t);
+  }
+});
+
 test('find log title selection', () => {
   assert.ok(isDefaultFindLog('City item find'));
   assert.ok(isDefaultFindLog('Dump find'));
