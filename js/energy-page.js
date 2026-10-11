@@ -2,13 +2,14 @@ import {
   DEFAULTS, WEEK_STATS, weekWindow, isGymLogTitle, gymSessions, dailyTotals,
   statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY,
 } from './energy.js';
+import { syncLogs, loadGyms, loadInventoryCategories } from './sync.js';
 
 const ENERGY_CATEGORIES = ['Drug', 'Energy Drink', 'Booster'];
 const ENERGY_TYPES = new Set(ENERGY_CATEGORIES);
 
 /**
  * The Energy page: gym energy against a weekly target, other energy use, and a booster plan.
- * @param {{ $, store, status, esc, money, num, client: () => object|null, catalog: () => Promise<Map>, logTypes: () => Promise<object[]>, onError: (err) => void }} ctx
+ * @param {{ $, store, status, esc, money, num, client: () => object|null, db: () => Promise<object>, player: () => Promise<{ id: number }>, catalog: () => Promise<Map>, logTypes: () => Promise<object[]>, onError: (err) => void }} ctx
  */
 export function createEnergyPage(ctx) {
   const { $, store, status, esc, money, num } = ctx;
@@ -62,6 +63,10 @@ export function createEnergyPage(ctx) {
       const now = Math.floor(Date.now() / 1000);
       const week = weekWindow(now, s.weekStartDay, s.weekStartHour);
 
+      const db = await ctx.db();
+      status('Checking your key…');
+      const player = (await ctx.player()).id;
+
       status('Loading item catalogue…');
       const catalog = await ctx.catalog();
       const logTypes = await ctx.logTypes();
@@ -72,14 +77,15 @@ export function createEnergyPage(ctx) {
       const refills = await client.refills();
       const gym = await client.gym().catch(() => null);
       if (!data.gymCost) {
-        const gyms = await client.gyms().catch(() => []);
+        const gyms = (await loadGyms(db, client).catch(() => null))?.value ?? [];
         data.gymCost = Object.fromEntries(gyms.map((g) => [g.id, g.energy_cost]));
       }
 
+      // Gym logs are saved locally like the purchase logs; only ones since the last sync are fetched.
       status('Reading this week\'s gym logs…');
       const gymLogIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
       const logs = gymLogIds.length
-        ? await client.logs(gymLogIds, { from: week.start, maxPages: 20, onPage: (n) => status(`Reading this week's gym logs… ${n} found`) })
+        ? (await syncLogs(db, client, player, gymLogIds, { since: week.start, onProgress: status })).logs
         : [];
 
       status('Comparing stats with the start of the week…');
@@ -87,12 +93,12 @@ export function createEnergyPage(ctx) {
       const statsStart = await client.personalStats(WEEK_STATS, week.start).catch(() => ({}));
 
       status('Checking your Xanax and energy drinks…');
-      const inv = await client.inventory({
-        categories: ENERGY_CATEGORIES,
+      const inv = await loadInventoryCategories(db, client, player, ENERGY_CATEGORIES, {
+        keep: (it) => ENERGY_TYPES.has(catalog.get(it.id)?.type),
         onCategory: (cat, i, n) => status(`Checking your Xanax and energy drinks… ${cat} (${i}/${n})`),
       });
       const owned = new Map();
-      for (const it of inv.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
+      for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
 
       Object.assign(data, {
         loaded: true, now, week, bars, cooldowns, refills, gym, logs, catalog, owned,

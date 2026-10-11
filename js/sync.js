@@ -49,9 +49,26 @@ export function loadLogTypes(db, client, opts) {
   return cached(db, 'cache:logtypes', TTL.logTypes, () => client.logTypes(), opts);
 }
 
+export function loadGyms(db, client, opts) {
+  return cached(db, 'cache:gyms', TTL.logTypes, () => client.gyms(), opts);
+}
+
 export function loadInventory(db, client, player, { force, onCategory, now } = {}) {
   return cached(db, `cache:inventory:${player}`, TTL.inventory,
     () => client.inventory({ bypassCache: force, onCategory }), { force, now });
+}
+
+/**
+ * Inventory for a few categories. Reuses the full saved inventory (filtered by `keep`) while it's
+ * fresh; otherwise fetches just those categories and saves them under their own key.
+ */
+export async function loadInventoryCategories(db, client, player, categories, { keep, onCategory, now = nowSec() } = {}) {
+  const full = await meta.get(db, `cache:inventory:${player}`);
+  if (full && now - full.at < TTL.inventory) {
+    return { value: { ...full.value, items: full.value.items.filter(keep) }, at: full.at, fromCache: true };
+  }
+  return cached(db, `cache:inventory:${player}:${categories.join(',')}`, TTL.inventory,
+    () => client.inventory({ categories, onCategory }), { now });
 }
 
 // v2: the first release asked for every log type in one request, got nothing back from Torn and
@@ -67,8 +84,11 @@ async function syncStates(db, player, ids) {
  * log of those types for this player.
  *  - Types seen before: one combined incremental fetch of anything newer than the last sync.
  *  - New types: a backfill of up to `maxPages` pages (100 logs each), newest first.
+ * With `since` (unix seconds), only logs from then on are needed: new types are read back to
+ * `since` rather than as far as possible, types saved from a later point have the gap filled,
+ * and only logs from `since` on are returned.
  */
-export async function syncLogs(db, client, player, typeIds, { maxPages = 20, onProgress, now = nowSec() } = {}) {
+export async function syncLogs(db, client, player, typeIds, { maxPages = 20, since, onProgress, now = nowSec() } = {}) {
   const ids = [...new Set(typeIds)];
   const states = await syncStates(db, player, ids);
   const known = ids.filter((id) => states[id]);
@@ -85,19 +105,32 @@ export async function syncLogs(db, client, player, typeIds, { maxPages = 20, onP
     for (const id of known) states[id] = { ...states[id], newest: now };
   }
 
+  // Saved only from after `since` (e.g. the week start moved earlier): read the missing stretch.
+  const gap = since == null ? [] : known.filter((id) => !states[id].complete && states[id].oldest > since);
+  if (gap.length) {
+    const logs = await client.logs(gap, {
+      from: since, to: Math.max(...gap.map((id) => states[id].oldest)), maxPages: INCREMENTAL_MAX_PAGES,
+      onPage: (n) => onProgress?.(`Reading earlier logs… ${n}`),
+    });
+    added += await saveNew(db, player, logs);
+    for (const id of gap) states[id] = { ...states[id], oldest: since };
+  }
+
   if (fresh.length) {
     const logs = await client.logs(fresh, {
-      maxPages,
+      from: since, maxPages,
       onPage: (n, p) => onProgress?.(`Reading log history… ${n} found (request ${p})`),
     });
     added += await saveNew(db, player, logs);
-    const oldest = logs.length ? Math.min(...logs.map((l) => l.timestamp)) : now;
-    const complete = logs.length < maxPages * 100;
+    const capped = logs.length >= maxPages * 100;
+    const oldest = since != null && !capped ? since : logs.length ? Math.min(...logs.map((l) => l.timestamp)) : now;
+    const complete = since == null && !capped;
     for (const id of fresh) states[id] = { newest: now, oldest, complete };
   }
 
   await db.putMany(STORES.meta, ids.map((id) => ({ key: syncKey(player, id), value: states[id] })));
-  return { logs: await savedLogs(db, player, ids), added };
+  const saved = await savedLogs(db, player, ids);
+  return { logs: since == null ? saved : saved.filter((l) => l.timestamp >= since), added };
 }
 
 /** Fetch further back in time for types whose history isn't complete yet. */

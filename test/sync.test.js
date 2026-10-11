@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
-import { syncLogs, backfillOlder, loadInventory, loadCatalog, identify, savedSnapshots, saveSnapshotFor } from '../js/sync.js';
+import { syncLogs, backfillOlder, loadInventory, loadInventoryCategories, loadCatalog, identify, savedSnapshots, saveSnapshotFor } from '../js/sync.js';
 
 /** Fake Torn client over a fixed set of logs, recording each call. */
 function fakeClient(allLogs) {
@@ -101,4 +101,46 @@ test('snapshots are stored per player and replaced within a day', async () => {
   const mine = await savedSnapshots(db, 42);
   assert.equal(mine.length, 1);
   assert.equal(mine[0].items.length, 1);
+});
+
+test('since: new types read back only to since, then incrementally; earlier since fills the gap', async () => {
+  const db = memoryDb();
+  const logs = [log('a', 1000, 7), log('b', 3000, 7), log('c', 4000, 7)];
+  const client = fakeClient(logs);
+
+  const first = await syncLogs(db, client, 42, [7], { since: 2500, now: 5000 });
+  assert.deepEqual(first.logs.map((l) => l.id), ['c', 'b']);
+  assert.equal(client.calls[0].from, 2500);
+
+  logs.push(log('d', 6000, 7));
+  const second = await syncLogs(db, client, 42, [7], { since: 2500, now: 7000 });
+  assert.equal(second.added, 1);
+  assert.equal(client.calls.length, 2);
+  assert.ok(client.calls[1].from > 4000, 'only newer than the last sync');
+
+  const earlier = await syncLogs(db, client, 42, [7], { since: 500, now: 8000 });
+  assert.deepEqual(earlier.logs.map((l) => l.id), ['d', 'c', 'b', 'a']);
+  const gap = client.calls.at(-1);
+  assert.equal(gap.from, 500);
+  assert.equal(gap.to, 2500);
+
+  await syncLogs(db, client, 42, [7], { since: 500, now: 9000 });
+  assert.equal(client.calls.length, 5, 'gap is not read twice');
+});
+
+test('category inventory reuses a fresh full inventory, else fetches and caches its own', async () => {
+  const db = memoryDb();
+  const client = fakeClient([]);
+  const keep = (it) => it.id === 1;
+
+  await loadInventory(db, client, 42, { now: 1000 });
+  const reused = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1500 });
+  assert.equal(reused.fromCache, true);
+  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 1);
+
+  const fetched = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1000 + 4000 });
+  assert.equal(fetched.fromCache, false);
+  const again = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1000 + 4100 });
+  assert.equal(again.fromCache, true);
+  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 2);
 });
