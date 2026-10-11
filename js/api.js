@@ -80,13 +80,13 @@ export function createClient(key) {
      * Full inventory. Torn requires a category (error 21 without one, despite the spec), so
      * walk every category and follow pagination within each. Cached by Torn for 1 hour per category.
      */
-    async inventory({ bypassCache = false, onCategory } = {}) {
+    async inventory({ bypassCache = false, onCategory, categories = INVENTORY_CATEGORIES } = {}) {
       const items = [];
       let timestamp = null;
       let accepted = 0;
       const bypass = bypassCache ? Math.floor(Date.now() / 1000) : undefined;
-      for (const [i, cat] of INVENTORY_CATEGORIES.entries()) {
-        onCategory?.(cat, i + 1, INVENTORY_CATEGORIES.length);
+      for (const [i, cat] of categories.entries()) {
+        onCategory?.(cat, i + 1, categories.length);
         let next = '/user/inventory';
         let params = { cat, limit: 250, timestamp: bypass };
         for (let page = 0; next && page < 20; page++) {
@@ -126,6 +126,38 @@ export function createClient(key) {
         to = Math.min(...body.log.map((l) => l.timestamp));
       }
       return [...seen.values()].sort((a, b) => b.timestamp - a.timestamp);
+    },
+
+    /** Energy, nerve, happy and life bars. */
+    async bars() {
+      return (await get('/user/bars')).bars;
+    },
+
+    /** Seconds left on drug, medical and booster cooldowns. */
+    async cooldowns() {
+      return (await get('/user/cooldowns')).cooldowns;
+    },
+
+    /** Whether today's refills have been used (true = used). Resets at 00:00 TCT. */
+    async refills() {
+      return (await get('/user/refills')).refills;
+    },
+
+    /** The gym you're currently training in. */
+    async gym() {
+      return (await get('/user/gym')).gym;
+    },
+
+    /** Every gym with its energy cost per train. */
+    async gyms() {
+      return (await get('/torn/gyms')).gyms;
+    },
+
+    /** Up to 10 personal stats by name, as { name: value }; at `timestamp` (nearest day) if given. */
+    async personalStats(stats, timestamp) {
+      const body = await get('/user/personalstats', { stat: stats.slice(0, 10).join(','), timestamp });
+      const list = Array.isArray(body.personalstats) ? body.personalstats : [];
+      return Object.fromEntries(list.map((s) => [s.name, s.value]));
     },
 
     /** Lowest current item market listing for one item. */

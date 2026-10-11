@@ -4,6 +4,7 @@ import {
   lotsByItem, costBasis, profit, breakEven,
 } from './costing.js';
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
+import { createEnergyPage } from './energy-page.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -20,6 +21,7 @@ const store = {
 // ---------- state ----------
 const state = {
   client: null,
+  key: null,
   catalog: new Map(),      // itemId -> TornItem
   logTypes: [],            // [{id, title}]
   holdings: [],            // [{id, name, qty, equipped}]
@@ -86,25 +88,56 @@ function status(msg, isError = false) {
 }
 
 // ---------- loading ----------
-async function load() {
+/** A fresh client for the key in the form, or null if there's no usable key. */
+function connect() {
   const key = $('#api-key').value.trim();
-  if (!key) return;
+  if (!key) return null;
   if (state.rejectedKeys.has(key)) {
-    return status('Torn rejected this key earlier. Check it on Torn, or create a new one, before trying again.', true);
+    status('Torn rejected this key earlier. Check it on Torn, or create a new one, before trying again.', true);
+    return null;
   }
   if ($('#remember-key').checked) store.set('key', key); else store.del('key');
-
+  state.key = key;
   state.client = createClient(key);
+  return state.client;
+}
+
+function reportError(err) {
+  console.error(err);
+  if (err.deadKey) {
+    // Torn ToS: stop using invalid or disabled keys straight away.
+    state.rejectedKeys.add(state.key);
+    state.client = null;
+    store.del('key');
+    $('#remember-key').checked = false;
+  }
+  const hint = err.deadKey ? ' — the key has been forgotten and won\'t be used again.'
+    : err.code === 16 ? ' — the key needs more access (Full Access or the custom key above).'
+    : err.fatal ? ' — Torn asked us to stop for now; try again in a minute.' : '';
+  status(`${err.message}${hint}`, true);
+}
+
+async function loadCatalog() {
+  const items = await state.client.items();
+  state.catalog = new Map(items.map((i) => [i.id, i]));
+  return state.catalog;
+}
+
+async function loadLogTypes() {
+  state.logTypes = await state.client.logTypes();
+  renderLogTypes();
+  return state.logTypes;
+}
+
+async function load() {
+  if (!state.client) return;
   const btn = $('#load-btn');
   btn.disabled = true;
   try {
     status('Loading item catalogue…');
     // Sequential, so a bad key costs a single request rather than several.
-    const items = await state.client.items();
-    const logTypes = await state.client.logTypes();
-    state.catalog = new Map(items.map((i) => [i.id, i]));
-    state.logTypes = logTypes;
-    renderLogTypes();
+    await loadCatalog();
+    await loadLogTypes();
 
     status('Loading inventory…');
     const inv = await state.client.inventory({
@@ -134,18 +167,7 @@ async function load() {
       `Inventory as of ${state.inventoryAt ? date(state.inventoryAt) : 'now'}.`);
     render();
   } catch (err) {
-    console.error(err);
-    if (err.deadKey) {
-      // Torn ToS: stop using invalid or disabled keys straight away.
-      state.rejectedKeys.add(key);
-      state.client = null;
-      store.del('key');
-      $('#remember-key').checked = false;
-    }
-    const hint = err.deadKey ? ' — the key has been forgotten and won\'t be used again.'
-      : err.code === 16 ? ' — the key needs access to user → log (Full Access or the custom key above).'
-      : err.fatal ? ' — Torn asked us to stop for now; try again in a minute.' : '';
-    status(`${err.message}${hint}`, true);
+    reportError(err);
   } finally {
     btn.disabled = false;
   }
@@ -369,8 +391,36 @@ function render() {
   renderTable(rows);
 }
 
+// ---------- pages ----------
+const energy = createEnergyPage({
+  $, store, status, esc, money, num: money0,
+  client: () => state.client,
+  catalog: () => (state.catalog.size ? state.catalog : loadCatalog()),
+  logTypes: () => (state.logTypes.length ? state.logTypes : loadLogTypes()),
+  onError: reportError,
+});
+const loaded = { inventory: () => !$('#results').hidden, energy: () => energy.loaded };
+const loaders = { inventory: load, energy: () => energy.load() };
+
+function currentPage() {
+  return location.hash === '#energy' ? 'energy' : 'inventory';
+}
+
+function showPage() {
+  const page = currentPage();
+  document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
+  document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
+  document.title = page === 'energy' ? 'Energy · Torn Utils' : 'Inventory profit · Torn Utils';
+  status('');
+  if (state.client && !loaded[page]()) loaders[page]();
+}
+window.addEventListener('hashchange', showPage);
+
 // ---------- events ----------
-$('#key-form').addEventListener('submit', (e) => { e.preventDefault(); load(); });
+$('#key-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (connect()) loaders[currentPage()]();
+});
 
 $('#table thead').addEventListener('click', (e) => {
   const key = e.target.closest('th')?.dataset.sort;
@@ -454,6 +504,7 @@ $('#refresh-prices').addEventListener('click', refreshLowest);
 $('#forget-btn').addEventListener('click', () => {
   try { Object.keys(localStorage).filter((k) => k.startsWith('tip.')).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   state.client = null;
+  state.key = null;
   state.lowest = {};
   state.overrides = {};
   state.itemGroups = {};
@@ -461,6 +512,7 @@ $('#forget-btn').addEventListener('click', () => {
   $('#api-key').value = '';
   $('#remember-key').checked = false;
   $('#results').hidden = true;
+  $('#en-results').hidden = true;
   status('Your key and all data saved by this page have been removed from this browser.');
 });
 
@@ -472,3 +524,4 @@ if (savedKey) {
   $('#api-key').value = savedKey;
   $('#remember-key').checked = true;
 }
+showPage();
