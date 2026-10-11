@@ -10,13 +10,29 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 
 | Data | Endpoint (API v2) | Key level |
 | --- | --- | --- |
+| Player id | `GET /user/basic` — once per key, so saved data is kept per player | Public |
 | Inventory | `GET /user/inventory?cat=…` — one call per category (Torn requires `cat`), cached by Torn for 1 hour per category | Minimal |
-| Purchase prices | `GET /user/log?log=<ids>` — item market, bazaar, shop and abroad buy logs | **Full** |
-| Log type ids | `GET /torn/logtypes` — purchase types are picked by title, editable in Settings | Public |
+| Purchases & finds | `GET /user/log?log=<ids>` — buy logs (item market, bazaar, shop, abroad) and find logs (crimes, city/dump finds, loot) | **Full** |
+| Log type ids | `GET /torn/logtypes` — purchase and find types are picked by title, editable in Settings | Public |
 | Market value | `GET /torn/items` → `value.market_price` | Public |
 | Lowest listing (optional) | `GET /market/{id}/itemmarket` | Public |
 
-**Cost basis.** By default the app assumes you sold or used your oldest stock first, so the units you still hold are costed from your *most recent* purchases. You can switch to a simple average of all purchases. Items with no purchase log (gifts, crime finds, older than the scanned logs) can have a cost typed in by hand; overrides are saved in the browser.
+**Saved locally, fetched incrementally.** Everything is kept in the browser (IndexedDB), per player:
+
+| Data | Reused for | Fetched again |
+| --- | --- | --- |
+| Log history | ever | only logs newer than the last sync (usually 1 call) |
+| Inventory | 1 hour (matches Torn's cache) | 25 calls, one per category |
+| Item catalogue & market values | 15 minutes | 1 call |
+| Log type list | 7 days | 1 call |
+
+A first load is ~30 calls; a repeat load is typically **1**. “Force refresh” in Settings ignores the saved inventory and prices for one load. “Read older log history” walks further back than the first scan.
+
+**Cost basis.** Purchases and finds form one timeline; finds count as **$0**. By default the app assumes you sold or used your oldest stock first, so the units you still hold are costed from your *most recent* acquisitions — e.g. 10 Dahlias bought abroad at $3,000 then 2 found in a crime, holding 12, costs $2,500 each. You can switch to a simple average of everything. Items with no log at all (gifts, trades) can have a cost typed in by hand.
+
+**History.** A snapshot of every holding's quantity, price and cost is saved once per Torn day you load the page. The History tab charts market value and profit after fees over 7/30/90 days or all time, shows changes since yesterday / last week / last month, and lists per-item changes. Settings has **Download backup** / **Restore backup** (JSON; never includes the API key) so history survives clearing browser data or moving device.
+
+**Trade goods vs personal use.** Holdings are split into two groups, with *Trade goods* shown by default. The default trade types are the usual Torn resale stock: plushies, flowers, drugs, artifacts, special items and supply packs. Everything else (boosters, candy, energy drinks, alcohol, medical, weapons, armour…) counts as personal use. Change the type list in Settings, or click an item's Trade / Personal tag to move just that item.
 
 **Fees.** Choose the sale route at the top of the results:
 
@@ -58,7 +74,7 @@ The app follows the [API ToS guidelines](https://www.torn.com/api.html):
 
 | Data Storage | Data Sharing | Purpose of Use | Key Storage & Sharing | Key Access Level |
 | --- | --- | --- | --- | --- |
-| Only locally (settings, manual costs, cached listing prices in the browser) | Nobody | Not eligible — only the end user has access | Stored locally only if “Remember” is ticked / Not shared | Custom: `user` → inventory, log; `torn` → items, logtypes; `market` → itemmarket. Or Full Access. |
+| Only locally, in the browser (log history, daily snapshots, cached inventory & prices, settings, manual costs) — kept until the user clears it | Nobody | Not eligible — only the end user has access | Stored locally only if “Remember” is ticked / Not shared | Custom: `user` → basic, inventory, log; `torn` → items, logtypes; `market` → itemmarket. Or Full Access. |
 
 - The ToS table is shown where the key is entered, with a link to create a custom key with only these selections.
 - Invalid or disabled keys (error codes 1, 2, 10, 13, 18) are forgotten immediately and never re-sent, as required to avoid IP bans. Rate-limit/blocked responses (5, 8, 9, 14) stop all further calls.
@@ -68,4 +84,5 @@ The app follows the [API ToS guidelines](https://www.torn.com/api.html):
 
 ## Notes
 
-- Torn log `data` fields aren't formally documented, so the parser accepts several shapes (`items[]`/`item`, `qty`/`quantity`, `cost_each`/`cost_total`). Expand a row and open “Raw log data” to check what was read.
+- Torn log `data` fields aren't formally documented, so the parser accepts several shapes (`items[]`/`item`/`items_gained`/`loot`/`reward`, `qty`/`quantity`, `cost_each`/`cost_total`). Expand a row and open “Raw log data” to check what was read.
+- Torn doesn't publish which log types are crime/find rewards, so they're chosen by title (anything mentioning finds, loot, dump or items gained; money-only and failed crimes are excluded). Adjust the list under Settings → Free item sources.

@@ -44,17 +44,17 @@
           </thead>
           <tbody>
             <tr>
-              <td>Only locally — settings, manual costs and cached listing prices in your browser</td>
+              <td>Only locally, in your browser — your log history, daily snapshots, cached inventory &amp; prices, settings and manual costs. Persistent until you clear it with the button below.</td>
               <td>Nobody</td>
               <td>Not eligible — only you have access. Shows you your own inventory's cost and profit.</td>
               <td>Stored locally only if you tick “Remember” / Not shared</td>
-              <td>Custom: <code>user</code> → inventory, log; <code>torn</code> → items, logtypes; <code>market</code> → itemmarket. Or Full Access.</td>
+              <td>Custom: <code>user</code> → basic, inventory, log; <code>torn</code> → items, logtypes; <code>market</code> → itemmarket. Or Full Access.</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p><strong>Recommended:</strong>
-        <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Inventory%20Profit&amp;user=inventory,log&amp;torn=items,logtypes&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+        <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Inventory%20Profit&amp;user=basic,inventory,log&amp;torn=items,logtypes&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
         with only the selections above. A Full Access key also works — logs are needed because that's where your purchase prices are recorded.
         You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
       <p><button type="button" id="forget-btn" class="secondary">Forget my key &amp; clear saved data</button></p>
@@ -71,11 +71,11 @@
         </label>
         <label>Cost basis
           <select id="cost-method">
-            <option value="recent">Most recent purchases (FIFO)</option>
-            <option value="average">Average of all purchases</option>
+            <option value="recent">Most recent purchases &amp; finds (FIFO)</option>
+            <option value="average">Average of all purchases &amp; finds</option>
           </select>
         </label>
-        <label>Log pages to scan (100 each)
+        <label>Log pages per history scan (100 each)
           <input id="log-pages" type="number" min="1" max="200" value="20">
         </label>
         <label>Market price source
@@ -84,17 +84,51 @@
             <option value="lowest">Lowest item market listing</option>
           </select>
         </label>
-        <label class="check"><input id="bypass-cache" type="checkbox"> Bypass inventory cache (normally 1 hour)</label>
+        <label class="check"><input id="bypass-cache" type="checkbox"> Force refresh on next load (ignore saved inventory &amp; prices)</label>
       </div>
+      <fieldset>
+        <legend>Item types counted as trade goods</legend>
+        <p class="hint">Everything else is treated as personal use. Click the Trade / Personal tag on any row to override a single item.</p>
+        <div id="trade-types" class="log-types"></div>
+        <p><button type="button" id="reset-trade-types" class="secondary">Reset to typical trade goods</button>
+          <button type="button" id="clear-item-groups" class="secondary">Clear per-item overrides</button></p>
+      </fieldset>
       <fieldset>
         <legend>Purchase log types to read</legend>
         <div id="log-types" class="log-types"><em>Load once to see available log types.</em></div>
+      </fieldset>
+      <fieldset>
+        <legend>Free item sources ($0 cost)</legend>
+        <p class="hint">Items from these logs — crimes, city and dump finds, attack loot, rewards — count as costing nothing.
+          Torn doesn't publish a list of these, so they're picked by name; untick anything that isn't an item find.</p>
+        <div id="find-types" class="log-types"><em>Load once to see available log types.</em></div>
+      </fieldset>
+      <fieldset>
+        <legend>Your saved data</legend>
+        <p class="hint" id="saved-summary">Nothing saved yet.</p>
+        <p>
+          <button type="button" id="older-logs" class="secondary">Read older log history</button>
+          <button type="button" id="export-btn" class="secondary">Download backup</button>
+          <label class="file-btn secondary">Restore backup<input type="file" id="import-file" accept="application/json,.json" hidden></label>
+        </p>
       </fieldset>
     </details>
 
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <section id="results" hidden>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab" data-tab="holdings" aria-selected="true">Holdings</button>
+        <button type="button" role="tab" class="tab" data-tab="history" aria-selected="false">History</button>
+      </div>
+      <div class="toolbar">
+        <div class="routes" role="radiogroup" aria-label="Item group">
+          <span>Show:</span>
+          <label><input type="radio" name="view" value="trade" checked> Trade goods <span class="count" id="count-trade"></span></label>
+          <label><input type="radio" name="view" value="personal"> Personal use <span class="count" id="count-personal"></span></label>
+          <label><input type="radio" name="view" value="all"> All <span class="count" id="count-all"></span></label>
+        </div>
+      </div>
       <div class="toolbar">
         <div class="routes" role="radiogroup" aria-label="Sale route">
           <span>Sell via:</span>
@@ -102,7 +136,7 @@
           <label><input type="radio" name="route" value="market" checked> <span id="route-market">Item market</span></label>
           <label><input type="radio" name="route" value="anon"> <span id="route-anon">Anonymous</span></label>
         </div>
-        <div class="filters">
+        <div class="filters holdings-only">
           <input id="filter" type="search" placeholder="Filter items…">
           <label class="check"><input id="hide-unpriced" type="checkbox" checked> Hide untradeable / no value</label>
           <label class="check"><input id="only-costed" type="checkbox"> Only items with a known cost</label>
@@ -110,6 +144,7 @@
         </div>
       </div>
 
+      <div id="holdings-view">
       <div class="cards" id="cards"></div>
 
       <div class="table-wrap">
@@ -130,7 +165,42 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="footnote">Click a row to see the purchases used for its cost. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
+      <p class="footnote">Click a row to see the purchases used for its cost. Click its Trade / Personal tag to move it between groups. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
+      </div>
+
+      <div id="history-view" hidden>
+        <div class="toolbar">
+          <div class="routes" role="radiogroup" aria-label="Date range">
+            <span>Range:</span>
+            <label><input type="radio" name="range" value="7"> 7 days</label>
+            <label><input type="radio" name="range" value="30" checked> 30 days</label>
+            <label><input type="radio" name="range" value="90"> 90 days</label>
+            <label><input type="radio" name="range" value="all"> All</label>
+          </div>
+        </div>
+        <div class="cards" id="history-cards"></div>
+        <div class="charts">
+          <figure class="chart-card"><figcaption>Market value</figcaption><div class="chart-box" id="chart-value"></div></figure>
+          <figure class="chart-card"><figcaption id="profit-caption">Profit after fees (items with a known cost)</figcaption><div class="chart-box" id="chart-profit"></div></figure>
+        </div>
+        <h2 class="section-title" id="changes-title">Changes</h2>
+        <div class="table-wrap">
+          <table id="changes-table">
+            <thead><tr><th>Item</th><th class="num">Qty then</th><th class="num">Qty now</th><th class="num">Price then</th><th class="num">Price now</th><th class="num">Value change</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <details class="panel daily">
+          <summary>Daily totals table</summary>
+          <div class="table-wrap">
+            <table id="daily-table">
+              <thead><tr><th>Date (TCT)</th><th class="num">Items</th><th class="num">Market value</th><th class="num">Paid</th><th class="num">Profit</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </details>
+        <p class="footnote">A snapshot is saved each day you load the page (one per Torn day; later loads replace it). Totals follow the Show and Sell via choices above.</p>
+      </div>
     </section>
   </main>
 

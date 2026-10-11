@@ -19,6 +19,19 @@ export function isDefaultPurchaseLog(title) {
   return isPurchaseLogTitle(title) && /(item market|bazaar|shop|abroad|auction)/i.test(title);
 }
 
+/**
+ * Logs where items arrive for free: crime rewards, city/dump finds, attack loot, mission rewards.
+ * Torn doesn't publish a list, so candidates are picked by title and shown for the user to adjust.
+ */
+export function isFindLogTitle(title) {
+  return /\b(finds?|found|loot|rewards?|dump|scavenge|crimes?|gain(ed)?)\b/i.test(title) &&
+    !/\b(buy|sell|money|cash|points?|nerve|energy|exp|experience|skill|fail(ed|ure)?|lost|jail|hospital|bounty)\b/i.test(title);
+}
+
+export function isDefaultFindLog(title) {
+  return isFindLogTitle(title) && /(item|find|found|loot|dump)/i.test(title);
+}
+
 const num = (v) => {
   const n = typeof v === 'string' ? Number(v.replace(/[$,]/g, '')) : v;
   return Number.isFinite(n) ? n : null;
@@ -43,6 +56,16 @@ export function extractItems(data) {
     if (id) out.push({ id, qty: num(qty) ?? 1 });
   };
 
+  // Reward/find logs sometimes nest items under a differently named key.
+  for (const k of ['items_gained', 'item_gained', 'items_found', 'loot', 'rewards', 'reward']) {
+    if (data[k] !== undefined && data[k] !== null && typeof data[k] !== 'number') {
+      const nested = typeof data[k] === 'object' && !Array.isArray(data[k]) && ('id' in data[k] || 'item' in data[k])
+        ? { item: data[k] } : { items: data[k] };
+      const found = extractItems(nested);
+      if (found.length) return found;
+    }
+  }
+
   if (Array.isArray(data.items)) {
     for (const it of data.items) {
       if (typeof it === 'object') push(it.id ?? it.item ?? it.item_id, firstNum(it, QTY_KEYS));
@@ -61,6 +84,20 @@ export function extractItems(data) {
     push(data.item_id, firstNum(data, QTY_KEYS));
   }
   return out;
+}
+
+/** Convert one find/reward log into $0 lots. */
+export function parseFind(log) {
+  return extractItems(log?.data).map((i) => ({
+    itemId: i.id,
+    qty: i.qty,
+    unitCost: 0,
+    timestamp: log.timestamp,
+    logId: log.id,
+    title: log.details?.title ?? '',
+    kind: 'find',
+    approximate: false,
+  }));
 }
 
 /**
@@ -87,15 +124,20 @@ export function parsePurchase(log) {
     timestamp: log.timestamp,
     logId: log.id,
     title: log.details?.title ?? '',
+    kind: 'purchase',
     approximate: items.length > 1 && firstNum(data, ['cost_each']) === null,
   }));
 }
 
-/** Group lots by item id, newest first. */
-export function lotsByItem(logs) {
+/**
+ * Group lots by item id, newest first. Logs whose type id is in `findTypeIds` are free finds
+ * ($0 each); everything else is treated as a purchase.
+ */
+export function lotsByItem(logs, findTypeIds = new Set()) {
   const map = new Map();
   for (const log of logs) {
-    for (const lot of parsePurchase(log)) {
+    const lots = findTypeIds.has(log.details?.id) ? parseFind(log) : parsePurchase(log);
+    for (const lot of lots) {
       if (!map.has(lot.itemId)) map.set(lot.itemId, []);
       map.get(lot.itemId).push(lot);
     }
@@ -107,7 +149,7 @@ export function lotsByItem(logs) {
 /**
  * Work out what the units you still hold cost you.
  *  - 'recent':  assume you sold/used the oldest first, so the units you hold are the most recent buys.
- *  - 'average': weighted average of every purchase found.
+ *  - 'average': weighted average of every purchase and find (finds count as $0).
  * Returns { unitCost, coveredQty, lots } or null when there is nothing to go on.
  */
 export function costBasis(lots, heldQty, method = 'recent') {
