@@ -512,6 +512,12 @@ function render() {
 const energy = createEnergyPage({
   $, store, status, esc, money, num: money0,
   client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: async () => {
+    await dbReady;
+    if (!state.player) state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
+    return state.player;
+  },
   catalog: async () => (state.catalog.size ? state.catalog : (await ensureCatalog(), state.catalog)),
   logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
   onError: reportError,
