@@ -53,8 +53,21 @@ export function gymSessions(logs, gymCost = {}) {
     let energy = num(d.energy_used ?? d.energy ?? d.energy_spent);
     if (energy == null && trains != null && gymCost[d.gym]) energy = trains * gymCost[d.gym];
     const stat = (l.details?.title ?? '').match(/strength|speed|defen[cs]e|dexterity/i)?.[0]?.toLowerCase() ?? null;
-    return { id: l.id, timestamp: l.timestamp, energy, stat, trains };
+    return { id: l.id, timestamp: l.timestamp, energy, stat, trains, gain: statGain(d), happy: num(d.happy_used ?? d.happy) };
   });
+}
+
+const STATS = ['strength', 'speed', 'defense', 'defence', 'dexterity'];
+
+/** Battle stats gained in one gym log, from `<stat>_increased` or `<stat>_after - <stat>_before`. */
+export function statGain(data = {}) {
+  for (const s of STATS) {
+    const inc = num(data[`${s}_increased`] ?? data[`${s}_gained`] ?? data[`${s}_increase`]);
+    if (inc != null) return inc;
+    const before = num(data[`${s}_before`]), after = num(data[`${s}_after`]);
+    if (before != null && after != null) return after - before;
+  }
+  return num(data.stat_increase ?? data.gain ?? data.gained ?? data.increased);
 }
 
 /** Gym energy per TCT day of the week window. */

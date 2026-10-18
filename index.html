@@ -14,6 +14,7 @@
     <nav class="tabs" aria-label="Pages">
       <a href="#inventory" data-page="inventory">Inventory profit</a>
       <a href="#energy" data-page="energy">Energy</a>
+      <a href="#training" data-page="training">Training cost</a>
     </nav>
     <form id="key-form" class="key-form" autocomplete="off">
       <label for="api-key" class="sr-only">Torn API key</label>
@@ -111,6 +112,17 @@
         <div id="find-types" class="log-types"><em>Load once to see available log types.</em></div>
       </fieldset>
       <fieldset>
+        <legend>Sale log types</legend>
+        <p class="hint">Sales are matched against your oldest purchases first to work out realised profit on the Trading tab.
+          Where a log doesn't state a fee, item market sales are charged the fee above.</p>
+        <div id="sell-types" class="log-types"><em>Load once to see available log types.</em></div>
+      </fieldset>
+      <fieldset>
+        <legend>Item use log types</legend>
+        <p class="hint">Items you use (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…) come out of stock here and are costed on the Training cost page.</p>
+        <div id="use-types" class="log-types"><em>Load once to see available log types.</em></div>
+      </fieldset>
+      <fieldset>
         <legend>Your saved data</legend>
         <p class="hint" id="saved-summary">Nothing saved yet.</p>
         <p>
@@ -128,6 +140,7 @@
       </div>
       <div class="view-tabs" role="tablist">
         <button type="button" role="tab" class="tab" data-tab="holdings" aria-selected="true">Holdings</button>
+        <button type="button" role="tab" class="tab" data-tab="trading" aria-selected="false">Trading</button>
         <button type="button" role="tab" class="tab" data-tab="history" aria-selected="false">History</button>
       </div>
       <div class="toolbar">
@@ -177,8 +190,7 @@
       <p class="footnote">Click a row to see the purchases used for its cost. Click its Trade / Personal tag to move it between groups. “Paid / unit” can be typed over when no log is found — overrides are saved in this browser.</p>
       </div>
 
-      <div id="history-view" hidden>
-        <div class="toolbar">
+      <div class="toolbar range-bar">
           <div class="routes" role="radiogroup" aria-label="Date range">
             <span>Range:</span>
             <label><input type="radio" name="range" value="7"> 7 days</label>
@@ -186,7 +198,41 @@
             <label><input type="radio" name="range" value="90"> 90 days</label>
             <label><input type="radio" name="range" value="all"> All</label>
           </div>
+      </div>
+
+      <div id="trading-view" hidden>
+        <div class="cards" id="trading-cards"></div>
+        <div class="charts">
+          <figure class="chart-card"><figcaption>Realised profit (running total)</figcaption><div class="chart-box" id="chart-realised"></div></figure>
         </div>
+        <div class="table-wrap">
+          <table id="trading-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">Bought</th>
+                <th class="num">Spent</th>
+                <th class="num">Avg buy</th>
+                <th class="num">Sold</th>
+                <th class="num">Proceeds</th>
+                <th class="num">Avg sell</th>
+                <th class="num">Realised</th>
+                <th class="num">Margin</th>
+                <th class="num">Used</th>
+                <th class="num">Held</th>
+                <th class="num">Unrealised</th>
+                <th class="num">Total</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="footnote">Realised profit matches each sale against your oldest purchases and finds first, using sale proceeds after fees.
+          Units sold with no purchase on record (e.g. bought before your saved log history) aren't counted in realised profit — “Read older log history” in Settings can fill the gap.
+          Unrealised profit is what you hold now, valued with the Sell via choice above. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.</p>
+      </div>
+
+      <div id="history-view" hidden>
         <div class="cards" id="history-cards"></div>
         <div class="charts">
           <figure class="chart-card"><figcaption>Market value</figcaption><div class="chart-box" id="chart-value"></div></figure>
@@ -270,6 +316,64 @@
         </div>
         <p class="footnote">Gym energy comes from your gym training logs. Attacks are counted at 25 energy each from your attack stats; other energy uses aren't reported by the API.
           Attacks, boosters and refills compare your stats now with Torn's daily snapshot for the week's start day, so a week that doesn't start at 00:00 TCT can be out by part of a day. All times are Torn City Time (UTC).</p>
+      </section>
+    </div>
+
+    <div id="page-training" class="page" hidden>
+      <div class="toolbar">
+        <div class="routes" role="radiogroup" aria-label="Date range">
+          <span>Range:</span>
+          <label><input type="radio" name="tr-range" value="7"> 7 days</label>
+          <label><input type="radio" name="tr-range" value="30" checked> 30 days</label>
+          <label><input type="radio" name="tr-range" value="90"> 90 days</label>
+          <label><input type="radio" name="tr-range" value="all"> All</label>
+        </div>
+        <div class="routes" role="radiogroup" aria-label="Value consumables at">
+          <span>Cost consumables at:</span>
+          <label><input type="radio" name="tr-value" value="paid" checked> What I paid</label>
+          <label><input type="radio" name="tr-value" value="market"> Market value now</label>
+        </div>
+      </div>
+
+      <section id="tr-results" hidden>
+        <div class="toolbar">
+          <span class="muted" id="tr-asof"></span>
+          <span>
+            <button id="tr-older" type="button" class="secondary">Read older history</button>
+            <button id="tr-refresh" type="button" class="secondary">Refresh</button>
+          </span>
+        </div>
+        <div class="cards" id="tr-cards"></div>
+
+        <h2 class="section-title">Training jumps</h2>
+        <div class="table-wrap">
+          <table id="tr-jumps">
+            <thead><tr><th>Trained (TCT)</th><th>Stacked</th><th class="num">Cost</th><th class="num">Gym energy</th><th class="num">Stats gained</th><th class="num">Cost / stat</th><th class="num">Gain / energy</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">Consumables used</h2>
+        <div class="table-wrap">
+          <table id="tr-items">
+            <thead><tr><th>Item</th><th class="num">Used</th><th class="num">Cost</th><th class="num">Each</th><th class="num">Energy</th><th>Effect</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">By week</h2>
+        <div class="table-wrap">
+          <table id="tr-weeks">
+            <thead><tr><th>Week from (TCT)</th><th class="num">Consumables</th><th class="num">Gym energy</th><th class="num">Stats gained</th><th class="num">Jumps</th><th class="num">Cost / energy</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <p class="footnote">A <strong>jump</strong> is a burst of gym training with Ecstasy or a big happy item (erotic DVD etc.) used within the hour before it;
+          everything you used since your previous training — the stacked Xanax, cans and so on, up to 3 days back — counts towards it.
+          Consumables are costed from your purchase logs (oldest stock used first); anything with no purchase on record is valued at today's market price and marked ≈.
+          Points refills cost points rather than cash, so they aren't included. Item use logs come from Settings → Item use log types on the Inventory page.
+          Weeks follow the start day set on the Energy page.</p>
       </section>
     </div>
   </main>

@@ -1,0 +1,200 @@
+// Buy / sell / use ledger: every item that came in (purchases, finds) and went out (sales, uses),
+// matched first-in-first-out so each sale has a realised profit and each use has a cost.
+// Pure functions only, so it can be unit tested with `node --test`.
+
+import { extractItems, parsePurchase, parseFind } from './costing.js';
+
+/** Logs where you sell items for money: item market, bazaar, shops, abroad. */
+export function isSellLogTitle(title) {
+  return /\b(sell|sells|sold|sale)\b/i.test(title) &&
+    !/\b(points?|stocks?|shares?|propert|house|company|loan|bank|buy|bought|purchase|fail(ed)?|cancel(led)?|remove[ds]?|add(ed|s)?|list(ed|ing)?|update[ds]?|edit(ed)?)\b/i.test(title);
+}
+
+export function isDefaultSellLog(title) {
+  return isSellLogTitle(title) && /(item market|bazaar|shop|abroad|auction)/i.test(title);
+}
+
+/** Logs where you use (consume) an item yourself. */
+export function isUseLogTitle(title) {
+  return /\b(use|uses|used|consume[ds]?|take|takes|took|drink|drinks|eat|eats)\b/i.test(title) &&
+    /\bitem\b|\b(drugs?|boosters?|candy|energy drinks?|alcohol|medical|xanax|ecstasy|dvd)\b/i.test(title) &&
+    !/\b(crimes?|points?|refill|fail(ed)?|bounty|attack|mission|faction|armou?ry|loan|give|gave|send|sent|trade)\b/i.test(title);
+}
+
+export function isDefaultUseLog(title) {
+  return isUseLogTitle(title) && /\b(drugs?|boosters?|candy|energy drinks?|alcohol|medical)\b/i.test(title);
+}
+
+const num = (v) => {
+  const n = typeof v === 'string' ? Number(v.replace(/[$,]/g, '')) : v;
+  return Number.isFinite(n) ? n : null;
+};
+
+function firstNum(obj, keys) {
+  for (const k of keys) {
+    const n = num(obj?.[k]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+/**
+ * Convert one sale log into disposals: [{ itemId, qty, unitGross, unitNet, timestamp, logId, title }].
+ * When the log doesn't state a fee, item market sales are charged `marketFee` (+ `anonFee` when
+ * the log says the listing was anonymous) and marked as estimated.
+ */
+export function parseSale(log, { marketFee = 0.05, anonFee = 0.10 } = {}) {
+  const data = log?.data ?? {};
+  const items = extractItems(data);
+  if (!items.length) return [];
+  const title = log.details?.title ?? '';
+  const totalQty = items.reduce((s, i) => s + i.qty, 0);
+
+  let unitGross = firstNum(data, ['cost_each', 'price_each', 'value_each', 'price', 'cost_per_item']);
+  const total = firstNum(data, ['cost_total', 'total_cost', 'total_value', 'value', 'money', 'money_gained', 'cost', 'total']);
+  if (unitGross === null && total !== null && totalQty > 0) unitGross = total / totalQty;
+  if (unitGross === null) return [];
+
+  const gross = unitGross * totalQty;
+  let fee = firstNum(data, ['fee', 'fees', 'market_fee', 'tax']);
+  let feeEstimated = false;
+  if (fee === null) {
+    fee = /item market/i.test(title) ? gross * (marketFee + (data.anonymous ? anonFee : 0)) : 0;
+    feeEstimated = fee > 0;
+  }
+  const unitNet = (gross - fee) / totalQty;
+
+  return items.map((i) => ({
+    itemId: i.id,
+    qty: i.qty,
+    unitGross,
+    unitNet,
+    timestamp: log.timestamp,
+    logId: log.id,
+    title,
+    feeEstimated,
+  }));
+}
+
+/** Convert one item-use log into disposals: [{ itemId, qty, timestamp, logId, title }]. */
+export function parseUse(log) {
+  return extractItems(log?.data).map((i) => ({
+    itemId: i.id, qty: i.qty, timestamp: log.timestamp, logId: log.id, title: log.details?.title ?? '',
+  }));
+}
+
+/**
+ * Match every sale and use against what came in before it, oldest first (FIFO).
+ * Each disposal gains `matchedQty`, `cost` (what the matched units cost) and `unknownQty`
+ * (units with no purchase or find before them, e.g. bought before the saved log history).
+ * Sales also gain `realised` = net proceeds of the matched units minus their cost.
+ *
+ * @param {object[]} logs   saved logs of any of the types below
+ * @param {{ purchaseIds: Set<number>, findIds: Set<number>, saleIds: Set<number>, useIds: Set<number> }} types
+ * @returns {{ acquisitions: object[], sales: object[], uses: object[] }} each newest first
+ */
+export function buildLedger(logs, { purchaseIds, findIds, saleIds, useIds }, fees = {}) {
+  const events = [];
+  for (const log of logs) {
+    const t = log.details?.id;
+    if (findIds.has(t)) events.push(...parseFind(log).map((e) => ({ ...e, side: 'in' })));
+    else if (purchaseIds.has(t)) events.push(...parsePurchase(log).map((e) => ({ ...e, side: 'in' })));
+    else if (saleIds.has(t)) events.push(...parseSale(log, fees).map((e) => ({ ...e, side: 'out', kind: 'sale' })));
+    else if (useIds.has(t)) events.push(...parseUse(log).map((e) => ({ ...e, side: 'out', kind: 'use' })));
+  }
+  // Oldest first; at the same second, count arrivals before departures.
+  events.sort((a, b) => a.timestamp - b.timestamp || (a.side === 'in' ? -1 : 1) - (b.side === 'in' ? -1 : 1));
+
+  const queues = new Map(); // itemId -> [{ qty, unitCost }] oldest first
+  const acquisitions = [], sales = [], uses = [];
+  for (const e of events) {
+    const q = queues.get(e.itemId) ?? [];
+    queues.set(e.itemId, q);
+    if (e.side === 'in') {
+      q.push({ qty: e.qty, unitCost: e.unitCost });
+      acquisitions.push(e);
+      continue;
+    }
+    let remaining = e.qty;
+    let cost = 0;
+    while (remaining > 0 && q.length) {
+      const take = Math.min(q[0].qty, remaining);
+      cost += take * q[0].unitCost;
+      remaining -= take;
+      q[0].qty -= take;
+      if (q[0].qty <= 0) q.shift();
+    }
+    const out = { ...e, matchedQty: e.qty - remaining, unknownQty: remaining, cost };
+    delete out.side;
+    if (e.kind === 'sale') {
+      out.realised = out.unitNet * out.matchedQty - cost;
+      sales.push(out);
+    } else {
+      uses.push(out);
+    }
+  }
+  const newest = (a, b) => b.timestamp - a.timestamp;
+  return { acquisitions: acquisitions.sort(newest), sales: sales.sort(newest), uses: uses.sort(newest) };
+}
+
+/**
+ * Per-item buy/sell/use totals for events from `from` (unix seconds, null = all time) on,
+ * for the items `include(itemId)` accepts. Sorted by realised profit, best first.
+ */
+export function tradeSummary(ledger, { from = null, include = () => true } = {}) {
+  const inRange = (e) => (from == null || e.timestamp >= from) && include(e.itemId);
+  const rows = new Map();
+  const row = (id) => {
+    if (!rows.has(id)) {
+      rows.set(id, {
+        itemId: id, boughtQty: 0, spent: 0, foundQty: 0, soldQty: 0, gross: 0, proceeds: 0,
+        matchedQty: 0, matchedProceeds: 0, costOfSold: 0, realised: 0, unknownQty: 0,
+        usedQty: 0, usedCost: 0, feeEstimated: false, lastSale: null,
+      });
+    }
+    return rows.get(id);
+  };
+  for (const a of ledger.acquisitions.filter(inRange)) {
+    const r = row(a.itemId);
+    if (a.kind === 'find') r.foundQty += a.qty;
+    else { r.boughtQty += a.qty; r.spent += a.qty * a.unitCost; }
+  }
+  for (const s of ledger.sales.filter(inRange)) {
+    const r = row(s.itemId);
+    r.soldQty += s.qty;
+    r.gross += s.qty * s.unitGross;
+    r.proceeds += s.qty * s.unitNet;
+    r.matchedQty += s.matchedQty;
+    r.matchedProceeds += s.matchedQty * s.unitNet;
+    r.costOfSold += s.cost;
+    r.realised += s.realised;
+    r.unknownQty += s.unknownQty;
+    r.feeEstimated ||= s.feeEstimated;
+    r.lastSale = Math.max(r.lastSale ?? 0, s.timestamp);
+  }
+  for (const u of ledger.uses.filter(inRange)) {
+    const r = row(u.itemId);
+    r.usedQty += u.qty;
+    r.usedCost += u.cost;
+  }
+  for (const r of rows.values()) {
+    r.avgBuy = r.boughtQty ? r.spent / r.boughtQty : null;
+    r.avgSell = r.soldQty ? r.proceeds / r.soldQty : null;
+    r.margin = r.costOfSold > 0 ? r.realised / r.costOfSold : null;
+  }
+  return [...rows.values()].sort((a, b) => b.realised - a.realised);
+}
+
+/** Running total of realised profit per UTC day, oldest first: [{ date, t, day, total }]. */
+export function realisedByDay(sales) {
+  const days = new Map();
+  for (const s of sales) {
+    const date = new Date(s.timestamp * 1000).toISOString().slice(0, 10);
+    days.set(date, (days.get(date) ?? 0) + s.realised);
+  }
+  let total = 0;
+  return [...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, day]) => {
+    total += day;
+    return { date, t: Date.parse(date), day, total };
+  });
+}

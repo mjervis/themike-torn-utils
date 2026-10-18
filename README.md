@@ -1,9 +1,10 @@
 # Torn Utils
 
-A static, client-side web app for [Torn](https://www.torn.com) with two pages:
+A static, client-side web app for [Torn](https://www.torn.com) with three pages:
 
-- **Inventory profit** — your inventory alongside what you paid for each item, what it's worth now, and the profit if you sell it, with the item market fee (5%) and anonymous listing fee (+10%) applied.
+- **Inventory profit** — your inventory alongside what you paid for each item, what it's worth now, and the profit if you sell it, with the item market fee (5%) and anonymous listing fee (+10%) applied. The **Trading** tab adds up everything you've bought and sold, with realised profit on sales and unrealised profit on what you still hold.
 - **Energy** — gym energy spent this week against your faction's training requirement, what else your energy went on, and a "best options" plan for when to take Xanax, use refills and drink energy cans to hit the target.
+- **Training cost** — the consumables you've used for training (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…), grouped into happy jumps, with the cost per jump, per energy and per stat point gained.
 
 **Live:** https://mjervis.github.io/themike-torn-utils/
 
@@ -16,6 +17,7 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 | Player id | `GET /user/basic` — once per key, so saved data is kept per player | Public |
 | Inventory | `GET /user/inventory?cat=…` — one call per category (Torn requires `cat`), cached by Torn for 1 hour per category | Minimal |
 | Purchases & finds | `GET /user/log?log=<ids>` — buy logs (item market, bazaar, shop, abroad) and find logs (crimes, city/dump finds, loot) | **Full** |
+| Sales & item use | `GET /user/log?log=<ids>` — sell logs (item market, bazaar, shop) and item use logs (drugs, boosters, energy drinks, candy) | **Full** |
 | Log type ids | `GET /torn/logtypes` — purchase and find types are picked by title, editable in Settings | Public |
 | Market value | `GET /torn/items` → `value.market_price` | Public |
 | Lowest listing (optional) | `GET /market/{id}/itemmarket` | Public |
@@ -37,6 +39,10 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 A first load is ~30 calls; a repeat load is typically **1**. The Energy page reads gym logs back to the start of your faction's week the first time, then only new ones. On opening the page, the last player's saved inventory profit data is shown straight away, with no key or API calls; **Update** fetches fresh inventory and prices (as does “Force refresh” in Settings for one load). “Read older log history” walks further back than the first scan.
 
 **Cost basis.** Purchases and finds form one timeline; finds count as **$0**. By default the app assumes you sold or used your oldest stock first, so the units you still hold are costed from your *most recent* acquisitions — e.g. 10 Dahlias bought abroad at $3,000 then 2 found in a crime, holding 12, costs $2,500 each. You can switch to a simple average of everything. Items with no log at all (gifts, trades) can have a cost typed in by hand.
+
+**Trading.** Purchases, finds, sales and item uses form one ledger per item, matched first in, first out: each sale is set against your oldest stock, so its realised profit is the sale proceeds after fees minus what those units cost. Item market sales use the fee in the log, or the item market fee setting when the log doesn't give one. Units sold with no purchase before them (e.g. bought before your saved history) are shown as uncosted and left out of realised profit. Unrealised profit is the Holdings figure for what you still hold, so *overall profit* = realised + unrealised. The range (7/30/90 days, all) and Trade goods / Personal / All choices apply. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.
+
+**Training cost.** Item use logs are matched against your purchases the same way, so each Xanax, can or DVD you use is costed at what you paid (or, by choice, today's market value; units with no purchase on record always use market value and are marked ≈). Gym training logs are grouped into bursts; a burst with Ecstasy or a big happy item (≥ 500 happy, e.g. an erotic DVD) used within the hour before it is a **jump**, and everything used since your previous training — up to 3 days back — counts towards that jump's cost. Where gym logs record stat gains, the page shows cost per stat point and how a jump's stats per energy compare with your ordinary training. Weeks follow the Energy page's week start. Points refills aren't costed.
 
 **History.** A snapshot of every holding's quantity, price and cost is saved once per Torn day you load the page. The History tab charts market value and profit after fees over 7/30/90 days or all time, shows changes since yesterday / last week / last month, and lists per-item changes. Settings has **Download backup** / **Restore backup** (JSON; never includes the API key) so history survives clearing browser data or moving device.
 
