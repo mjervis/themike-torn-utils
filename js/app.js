@@ -11,6 +11,8 @@ import {
 import { buildSnapshot, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart } from './history.js';
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 import { createEnergyPage } from './energy-page.js';
+import { createTrainingPage } from './training-page.js';
+import { isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, buildLedger, tradeSummary, realisedByDay } from './ledger.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -63,6 +65,8 @@ const settings = {
       tradeTypes: [...document.querySelectorAll('#trade-types input:checked')].map((i) => i.value),
       selectedLogs: [...document.querySelectorAll('#log-types input:checked')].map((i) => Number(i.value)),
       selectedFinds: [...document.querySelectorAll('#find-types input:checked')].map((i) => Number(i.value)),
+      selectedSells: [...document.querySelectorAll('#sell-types input:checked')].map((i) => Number(i.value)),
+      selectedUses: [...document.querySelectorAll('#use-types input:checked')].map((i) => Number(i.value)),
       range: document.querySelector('input[name=range]:checked').value,
     };
   },
@@ -86,6 +90,17 @@ const settings = {
     if (rg) rg.checked = true;
   },
 };
+
+/** Every log type the inventory and trading figures read: purchases, finds, sales and item uses. */
+const ledgerLogIds = (s = settings.read()) => [...s.selectedLogs, ...s.selectedFinds, ...s.selectedSells, ...s.selectedUses];
+
+/** Purchases, finds, sales and uses matched oldest first (see ledger.js). */
+function ledgerFor(logs, s = settings.read()) {
+  return buildLedger(logs, {
+    purchaseIds: new Set(s.selectedLogs), findIds: new Set(s.selectedFinds),
+    saleIds: new Set(s.selectedSells), useIds: new Set(s.selectedUses),
+  }, { marketFee: s.marketFee / 100, anonFee: s.anonFee / 100 });
+}
 
 // ---------- formatting ----------
 const money0 = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
@@ -182,7 +197,7 @@ async function load({ force = settings.read().bypassCache } = {}) {
     const s = settings.read();
     if (!s.selectedLogs.length) throw new Error('No purchase log types selected in Settings.');
     state.findTypeIds = new Set(s.selectedFinds);
-    const synced = await syncLogs(state.db, state.client, state.player.id, [...s.selectedLogs, ...s.selectedFinds], {
+    const synced = await syncLogs(state.db, state.client, state.player.id, ledgerLogIds(s), {
       maxPages: s.logPages,
       onProgress: status,
     });
@@ -237,7 +252,7 @@ async function restoreSaved() {
   state.snapshots = await savedSnapshots(state.db, last.id);
   const s = settings.read();
   state.findTypeIds = new Set(s.selectedFinds);
-  applyLogs(await savedLogs(state.db, last.id, [...s.selectedLogs, ...s.selectedFinds]));
+  applyLogs(await savedLogs(state.db, last.id, ledgerLogIds(s)));
   $('#tos').open = false;
   $('#results').hidden = false;
   await renderSavedSummary();
@@ -260,7 +275,9 @@ function aggregate(items) {
 
 function applyLogs(logs) {
   state.rawLogs = new Map(logs.map((l) => [l.id, l]));
-  state.lots = lotsByItem(logs, state.findTypeIds);
+  const purchases = new Set(settings.read().selectedLogs);
+  // Sales and uses are only for the ledger; the holdings cost basis comes from what came in.
+  state.lots = lotsByItem(logs.filter((l) => purchases.has(l.details?.id) || state.findTypeIds.has(l.details?.id)), state.findTypeIds);
   renderLogCounts();
 }
 
@@ -281,7 +298,7 @@ async function renderSavedSummary() {
   const s = settings.read();
   const [logs, cov] = await Promise.all([
     state.db.getAll(STORES.logs),
-    historyCoverage(state.db, state.player.id, [...s.selectedLogs, ...s.selectedFinds]),
+    historyCoverage(state.db, state.player.id, ledgerLogIds(s)),
   ]);
   const mine = logs.filter((l) => l.player === state.player.id).length;
   const snaps = state.snapshots.map((x) => x.date).sort();
@@ -298,7 +315,7 @@ async function renderSavedSummary() {
 async function readOlderLogs() {
   if (!state.client) return status('Load with your key first.', true);
   const s = settings.read();
-  const ids = [...s.selectedLogs, ...s.selectedFinds];
+  const ids = ledgerLogIds(s);
   $('#older-logs').disabled = true;
   try {
     const before = state.client.calls;
@@ -418,6 +435,8 @@ function renderLogTypes() {
   // Saved find choices from an older version (or none at all) fall back to the current defaults.
   const finds = saved?.findsVersion === FINDS_VERSION ? saved.selectedFinds : null;
   list('#find-types', (t) => isFindLogTitle(t) && !isPurchaseLogTitle(t), isDefaultFindLog, finds, 'No find log types found.');
+  list('#sell-types', isSellLogTitle, isDefaultSellLog, saved?.selectedSells?.length ? saved.selectedSells : null, 'No sale log types found.');
+  list('#use-types', isUseLogTitle, isDefaultUseLog, saved?.selectedUses?.length ? saved.selectedUses : null, 'No item use log types found.');
   renderLogCounts();
 }
 
@@ -541,11 +560,15 @@ function render() {
   const tab = state.tab ?? 'holdings';
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
   $('#holdings-view').hidden = tab !== 'holdings';
+  $('#trading-view').hidden = tab !== 'trading';
   $('#history-view').hidden = tab !== 'history';
+  $('.range-bar').hidden = tab === 'holdings';
   document.querySelectorAll('.holdings-only').forEach((e) => { e.hidden = tab !== 'holdings'; });
   if (tab === 'holdings') {
     renderCards(rows);
     renderTable(rows);
+  } else if (tab === 'trading') {
+    renderTrading();
   } else {
     renderHistory();
   }
@@ -565,18 +588,38 @@ const energy = createEnergyPage({
   logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
   onError: reportError,
 });
-const loaded = { inventory: () => !$('#results').hidden, energy: () => energy.loaded };
-const loaders = { inventory: load, energy: () => energy.load() };
+const training = createTrainingPage({
+  $, store, status, esc, money, num: money0,
+  client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: async () => {
+    await dbReady;
+    if (!state.player) state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
+    return state.player;
+  },
+  catalog: async () => (state.catalog.size ? state.catalog : (await ensureCatalog(), state.catalog)),
+  logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
+  // Read after logTypes(), which renders the Settings checkboxes these come from.
+  ledgerLogIds: () => ledgerLogIds(),
+  ledgerFor: (logs) => ledgerFor(logs),
+  hasUseTypes: () => settings.read().selectedUses.length > 0,
+  logPages: () => settings.read().logPages,
+  onError: reportError,
+});
+const PAGES = ['inventory', 'energy', 'training'];
+const loaded = { inventory: () => !$('#results').hidden, energy: () => energy.loaded, training: () => training.loaded };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load() };
 
 function currentPage() {
-  return location.hash === '#energy' ? 'energy' : 'inventory';
+  const page = location.hash.slice(1);
+  return PAGES.includes(page) ? page : 'inventory';
 }
 
 function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = page === 'energy' ? 'Energy · Torn Utils' : 'Inventory profit · Torn Utils';
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost' }[page]} · Torn Utils`;
   status('');
   if (state.client && !loaded[page]()) loaders[page]();
 }
@@ -641,6 +684,71 @@ function renderHistory() {
   $('#daily-table tbody').innerHTML = [...pts].reverse().map((p) => `
     <tr><td>${p.date}</td><td class="num">${p.count}</td><td class="num">${money(p.value)}</td><td class="num">${money(p.paid)}</td>
     <td class="num ${signClass(p.profit)}">${money(p.profit)}</td></tr>`).join('');
+}
+
+// ---------- trading view ----------
+function renderTrading() {
+  const s = settings.read();
+  const rules = { tradeTypes: s.tradeTypes, itemOverrides: state.itemGroups };
+  const include = (id) => s.view === 'all' || classify(state.catalog.get(id)?.type, id, rules).group === s.view;
+  const from = s.range === 'all' ? null : Math.floor(Date.now() / 1000) - Number(s.range) * 86400;
+  const ledger = ledgerFor([...state.rawLogs.values()], s);
+  const summary = tradeSummary(ledger, { from, include });
+
+  // What you still hold, valued with the chosen sale route (always "now", whatever the range).
+  const held = new Map(buildRows().filter((r) => include(r.id)).map((r) => [r.id, r]));
+  const rows = new Map(summary.map((r) => [r.itemId, { ...r }]));
+  // Held items with nothing bought or sold in the range still show their unrealised profit.
+  for (const h of held.values()) if (!rows.has(h.id) && h.profit != null) rows.set(h.id, { itemId: h.id });
+  const list = [...rows.entries()].map(([id, r]) => {
+    const h = held.get(id);
+    const unrealised = h?.profit ?? null;
+    return {
+      ...r, id, name: state.catalog.get(id)?.name ?? h?.name ?? `Item ${id}`, image: state.catalog.get(id)?.image,
+      held: h?.qty ?? 0, unrealised, total: (r.realised ?? 0) + (unrealised ?? 0),
+    };
+  }).sort((a, b) => b.total - a.total);
+
+  const sum = (k) => list.reduce((t, r) => t + (r[k] ?? 0), 0);
+  const realised = sum('realised');
+  const unrealised = sum('unrealised');
+  const costOfSold = sum('costOfSold');
+  const unknown = sum('unknownQty');
+  const estFees = list.some((r) => r.feeEstimated);
+  const rangeLabel = s.range === 'all' ? 'all saved history' : `last ${s.range} days`;
+  $('#trading-cards').innerHTML = `
+    <div class="card"><div class="label">Bought</div><div class="value">${money(sum('spent'))}</div><div class="sub">${money0.format(sum('boughtQty'))} units · ${esc(rangeLabel)}</div></div>
+    <div class="card"><div class="label">Sold (after fees)</div><div class="value">${money(sum('proceeds'))}</div><div class="sub">${money0.format(sum('soldQty'))} units · fees ${money(sum('gross') - sum('proceeds'))}${estFees ? ' (some estimated)' : ''}</div></div>
+    <div class="card"><div class="label">Realised profit</div><div class="value ${signClass(realised)}">${money(realised)}</div><div class="sub">margin ${pct(costOfSold ? realised / costOfSold : null)}${unknown ? ` · ${money0.format(unknown)} sold with no cost on record` : ''}</div></div>
+    <div class="card"><div class="label">Unrealised profit</div><div class="value ${signClass(unrealised)}">${money(unrealised)}</div><div class="sub">held now · ${esc(saleRoutes(s)[s.route].label)}</div></div>
+    <div class="card"><div class="label">Overall profit</div><div class="value ${signClass(realised + unrealised)}">${money(realised + unrealised)}</div><div class="sub">realised + unrealised · ${esc(viewLabel())}</div></div>`;
+
+  const pts = realisedByDay(ledger.sales.filter((x) => (from == null || x.timestamp >= from) && include(x.itemId)));
+  lineChart($('#chart-realised'), pts.map((p) => ({ label: dayLabel(p.date), value: p.total, t: p.t })),
+    { fmt: money, shortFmt: shortMoney, zeroLine: true, ariaLabel: 'Realised profit, running total by day' });
+  if (!pts.length) $('#chart-realised').textContent = 'No sales in this range.';
+
+  const qty = (n) => (n ? money0.format(n) : '');
+  $('#trading-table tbody').innerHTML = list.map((r) => `
+    <tr>
+      <td class="name"><div class="cell">${r.image ? `<img src="${esc(r.image)}" alt="" loading="lazy">` : ''}<span>${esc(r.name)}</span>
+        ${r.foundQty ? `<span class="tag found" title="Found in crimes, city or loot (counted at $0)">${money0.format(r.foundQty)} found</span>` : ''}
+        ${r.unknownQty ? `<span class="tag warn" title="Sold with no purchase on record before the sale, so left out of realised profit">${money0.format(r.unknownQty)} uncosted</span>` : ''}
+        ${r.feeEstimated ? '<span class="tag" title="Item market fee estimated from Settings">fee ≈</span>' : ''}</div></td>
+      <td class="num">${qty(r.boughtQty)}</td>
+      <td class="num">${r.spent ? money(r.spent) : ''}</td>
+      <td class="num muted">${money(r.avgBuy)}</td>
+      <td class="num">${qty(r.soldQty)}</td>
+      <td class="num">${r.proceeds ? money(r.proceeds) : ''}</td>
+      <td class="num muted">${money(r.avgSell)}</td>
+      <td class="num ${signClass(r.soldQty ? r.realised : null)}">${r.soldQty ? money(r.realised) : ''}</td>
+      <td class="num ${signClass(r.margin)}">${r.soldQty ? pct(r.margin) : ''}</td>
+      <td class="num muted" title="${r.usedQty ? `Cost ${money(r.usedCost)} — see Training cost` : ''}">${qty(r.usedQty)}</td>
+      <td class="num">${qty(r.held)}</td>
+      <td class="num ${signClass(r.unrealised)}">${money(r.unrealised)}</td>
+      <td class="num ${signClass(r.total)}"><strong>${money(r.total)}</strong></td>
+    </tr>`).join('') || `<tr><td colspan="13" class="muted">${ledgerLogIds(s).length && s.selectedSells.length
+      ? 'No buying or selling in this range.' : 'Pick sale log types in Settings, then press Update.'}</td></tr>`;
 }
 
 // ---------- backup ----------
@@ -782,7 +890,7 @@ $('#inv-update').addEventListener('click', () => {
 });
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
 document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
-$('#find-types').addEventListener('change', () => settings.save());
+for (const sel of ['#find-types', '#sell-types', '#use-types']) $(sel).addEventListener('change', () => settings.save());
 $('#older-logs').addEventListener('click', readOlderLogs);
 $('#export-btn').addEventListener('click', exportBackup);
 $('#import-file').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
@@ -801,6 +909,7 @@ $('#forget-btn').addEventListener('click', async () => {
   $('#remember-key').checked = false;
   $('#results').hidden = true;
   $('#en-results').hidden = true;
+  $('#tr-results').hidden = true;
   status('Your key and all data saved by this page — logs, snapshots and settings — have been removed from this browser.');
   renderSavedSummary();
 });
