@@ -14,8 +14,13 @@ test('sell and use log titles', () => {
   assert.ok(!isSellLogTitle('Item market buy'));
   assert.ok(!isSellLogTitle('Stock market sell shares'));
   assert.ok(!isSellLogTitle('Item market list'));
-  assert.ok(isDefaultUseLog('Item use drug'));
-  assert.ok(isDefaultUseLog('Item use booster'));
+  // Real Torn titles (GET /torn/logtypes).
+  for (const t of ['Item use xanax', 'Item use xanax overdose', 'Item use ecstasy', 'Item use erotic dvd',
+    'Item use feathery hotel coupon', 'Item use candy', 'Item use energy drink', 'Item use LSD']) assert.ok(isDefaultUseLog(t), t);
+  for (const t of ['Item use six pack of energy drink', 'Item use drug pack', 'Item use book', 'Item use box of grenades']) assert.ok(!isDefaultUseLog(t), t);
+  for (const t of ['Item market sell', 'Bazaar sell', 'Item shop sell', 'Auction house item sold']) assert.ok(isDefaultSellLog(t), t);
+  assert.ok(!isSellLogTitle('Auction house property sold'));
+  assert.ok(!isSellLogTitle('Item shop sell points'));
   assert.ok(isUseLogTitle('Item use'));
   assert.ok(!isUseLogTitle('Crime use item'));
   assert.ok(!isUseLogTitle('Points refill use'));

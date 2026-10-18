@@ -7,7 +7,7 @@ import { extractItems, parsePurchase, parseFind } from './costing.js';
 /** Logs where you sell items for money: item market, bazaar, shops, abroad. */
 export function isSellLogTitle(title) {
   return /\b(sell|sells|sold|sale)\b/i.test(title) &&
-    !/\b(points?|stocks?|shares?|propert|house|company|loan|bank|buy|bought|purchase|fail(ed)?|cancel(led)?|remove[ds]?|add(ed|s)?|list(ed|ing)?|update[ds]?|edit(ed)?)\b/i.test(title);
+    !/\b(points?|stocks?|shares?|propert(y|ies)|(?<!auction )house|company|loan|bank|buy|bought|purchase|fail(ed)?|cancel(led)?|remove[ds]?|add(ed|s)?|list(ed|ing)?|update[ds]?|edit(ed)?)\b/i.test(title);
 }
 
 export function isDefaultSellLog(title) {
@@ -21,8 +21,17 @@ export function isUseLogTitle(title) {
     !/\b(crimes?|points?|refill|fail(ed)?|bounty|attack|mission|faction|armou?ry|loan|give|gave|send|sent|trade)\b/i.test(title);
 }
 
+// Torn files most consumables under their own log type ("Item use xanax", "Item use erotic dvd"),
+// and only some by category ("Item use candy"). Packs and boxes are left out: they give items, not effects.
+const CONSUMABLE_USE = new RegExp(`^item use (${[
+  'drugs?', 'boosters?', 'candy', 'energy drinks?', 'alcohol', 'medical',
+  'cannabis', 'ecstasy', 'ketamine', 'lsd', 'opium', 'pcp', 'shrooms', 'speed', 'vicodin', 'xanax',
+  'erotic dvd', 'feathery hotel coupon', 'love juice',
+  'morphine', '(small )?first aid kit', 'neumune tablet', 'blood bag', 'ipecac syrup',
+].join('|')})( overdose)?$`, 'i');
+
 export function isDefaultUseLog(title) {
-  return isUseLogTitle(title) && /\b(drugs?|boosters?|candy|energy drinks?|alcohol|medical)\b/i.test(title);
+  return isUseLogTitle(title) && CONSUMABLE_USE.test(title.trim());
 }
 
 const num = (v) => {
