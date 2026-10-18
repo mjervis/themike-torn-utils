@@ -20,21 +20,22 @@ export function isDefaultPurchaseLog(title) {
 }
 
 /**
- * Logs where items arrive for free: crime rewards, city/dump finds, attack loot, mission rewards.
+ * Logs where items arrive for free: crime rewards, city/dump finds, attack loot, mission rewards,
+ * and items given to you (gifts, faction give-outs and payouts) — free as far as your costs go.
  * Torn doesn't publish a list, so candidates are picked by title and shown for the user to adjust.
  */
 export function isFindLogTitle(title) {
-  return /\b(finds?|found|loot|rewards?|dump|scavenge|crimes?|gain(ed)?)\b/i.test(title) &&
-    !/\b(buy|sell|money|cash|points?|nerve|energy|exp|experience|skill|fail(ed|ure)?|lost|jail|hospital|bounty)\b/i.test(title);
+  return /\b(finds?|found|loot|rewards?|dump|scavenge|crimes?|gain(ed)?|receive[ds]?|gifts?|payout)\b/i.test(title) &&
+    !/\b(buy|sell|money|cash|points?|nerve|energy|exp|experience|skill|fail(ed|ure)?|lost|jail|hospital|bounty|loan|trade|shares?|stocks?)\b/i.test(title);
 }
 
 // Logs where items go *out* (used in a crime, dumped, lost) or nothing usable comes in.
-const NOT_A_FIND = /\b(use|uses|used|add|adds|remove|lose|loses|retrieve|none|inquire|unlock|toggle|read|guess|reputation|initiate|plan|join|leave|cancel|spawn|migration|ammo|tokens?|credits?|stats?|strength|speed|defense|dexterity|endurance|happy|respect|property|key|ornament)\b/i;
+const NOT_A_FIND = /\b(use|uses|used|add|adds|remove|lose|loses|retrieve|ownership|none|inquire|unlock|toggle|read|guess|reputation|initiate|plan|join|leave|cancel|spawn|migration|ammo|tokens?|credits?|stats?|strength|speed|defense|dexterity|endurance|happy|respect|property|key|ornament)\b/i;
 
-/** Ticked by default: logs that clearly hand you an item — finds, loot, item gains and item rewards. */
+/** Ticked by default: logs that clearly hand you an item — finds, loot, item gains, rewards and gifts. */
 export function isDefaultFindLog(title) {
   return isFindLogTitle(title) && !NOT_A_FIND.test(title) &&
-    /\b(find|found|loot|item gain|gain items?|reward item)\b/i.test(title);
+    /\b(find|found|loot|item gain|gain items?|reward item|item receive|receive item|gift items?)\b/i.test(title);
 }
 
 const num = (v) => {

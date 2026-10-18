@@ -107,7 +107,7 @@
       </fieldset>
       <fieldset>
         <legend>Free item sources ($0 cost)</legend>
-        <p class="hint">Items from these logs — crimes, city and dump finds, attack loot, rewards — count as costing nothing.
+        <p class="hint">Items from these logs — crimes, city and dump finds, attack loot, rewards, and items given to you — count as costing nothing.
           Torn doesn't publish a list of these, so they're picked by name; untick anything that isn't an item find.</p>
         <div id="find-types" class="log-types"><em>Load once to see available log types.</em></div>
       </fieldset>
@@ -356,7 +356,7 @@
         <h2 class="section-title">Consumables used</h2>
         <div class="table-wrap">
           <table id="tr-items">
-            <thead><tr><th>Item</th><th class="num">Used</th><th class="num">Cost</th><th class="num">Each</th><th class="num">Energy</th><th>Effect</th></tr></thead>
+            <thead><tr><th>Item</th><th class="num">Used</th><th>Came from</th><th class="num">Cost</th><th class="num">Each</th><th class="num">Energy</th><th>Effect</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -371,7 +371,8 @@
 
         <p class="footnote">A <strong>jump</strong> is a burst of gym training with Ecstasy or a big happy item (erotic DVD etc.) used within the hour before it;
           everything you used since your previous training — the stacked Xanax, cans and so on, up to 3 days back — counts towards it.
-          Consumables are costed from your purchase logs (oldest stock used first); anything with no purchase on record is valued at today's market price and marked ≈.
+          Consumables are costed at what they cost you, oldest stock used first: bought units at the price you paid, and units from crimes, finds, gifts and faction payouts at $0
+          (the free sources are set under Inventory profit → Settings). Anything with no purchase or find on record is valued at today's market price and marked ≈.
           Points refills cost points rather than cash, so they aren't included. Item use logs come from Settings → Item use log types on the Inventory page.
           Weeks follow the start day set on the Energy page.</p>
       </section>

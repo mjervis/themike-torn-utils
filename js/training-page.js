@@ -1,7 +1,7 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
 import { syncLogs, backfillOlder, historyCoverage, loadGyms } from './sync.js';
 import {
-  CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem,
+  CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
   weeklyTraining, trainingTotals,
 } from './training.js';
 
@@ -111,6 +111,12 @@ export function createTrainingPage(ctx) {
   const day = (t) => new Date(t * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
   const n0 = (n) => (n == null || !Number.isFinite(n) ? '—' : num.format(Math.round(n)));
   const ratio = (n) => (n == null || !Number.isFinite(n) ? '—' : n >= 10 ? num.format(Math.round(n)) : n.toFixed(2));
+  // "62 bought · 25 free · 3 no record" — where the used units came from.
+  const sourceLabel = (u) => {
+    const src = sources(Array.isArray(u) ? u : [u]);
+    return [src.bought && `${n0(src.bought)} bought`, src.free && `${n0(src.free)} free`, src.unknown && `${n0(src.unknown)} no record`]
+      .filter(Boolean).join(' · ');
+  };
   const approx = (u) => (u.estimatedQty ? ' <span class="tag warn" title="Some units had no purchase on record and are valued at today\'s market price">≈</span>' : '');
 
   function render() {
@@ -135,7 +141,7 @@ export function createTrainingPage(ctx) {
 
     const cov = data.coverage;
     $('#tr-asof').textContent = `As of ${tct(now)} TCT${cov?.oldest ? ` · history back to ${day(cov.oldest)}${cov.complete ? ' (complete)' : ''}` : ''}`;
-    renderCards(totals, sessions, s);
+    renderCards(totals, sessions, s, sources(uses));
     renderJumps(jumps);
     renderItems(usesByItem(uses), effectOf);
     const energy = store.get('energy', {});
@@ -143,13 +149,13 @@ export function createTrainingPage(ctx) {
     renderWeeks(weeklyTraining({ uses, sessions, jumps }, anchor));
   }
 
-  function renderCards(t, sessions, s) {
+  function renderCards(t, sessions, s, src) {
     const gainKnown = t.gain != null;
     const boost = t.jumpGainPerEnergy && t.otherGainPerEnergy ? t.jumpGainPerEnergy / t.otherGainPerEnergy : null;
     $('#tr-cards').innerHTML = `
       <div class="card"><div class="label">Consumables used</div><div class="value">${money(t.spend)}</div>
         <div class="sub">${s.valueAt === 'market' ? 'at today\'s market value'
-          : t.estimatedQty ? `${n0(t.estimatedQty)} units at market value (no purchase on record)` : 'at what you paid'}</div></div>
+          : `at what they cost you · ${n0(src.free)} free (crimes, finds, gifts)${src.unknown ? ` · ${n0(src.unknown)} with no record, at market value` : ''}`}</div></div>
       <div class="card"><div class="label">Gym energy trained</div><div class="value">${n0(t.energy)}</div>
         <div class="sub">${n0(sessions.length)} gym logs · ${t.perEnergy == null ? '—' : `${money(t.perEnergy)} per energy`}</div></div>
       <div class="card"><div class="label">Stats gained</div><div class="value">${gainKnown ? n0(t.gain) : '—'}</div>
@@ -171,7 +177,7 @@ export function createTrainingPage(ctx) {
       const stacked = j.stackFrom < j.start - 3600 ? ` <span class="muted">· stacked from ${tct(j.stackFrom)}</span>` : '';
       return `<tr>
         <td>${tct(j.start)}${stacked}</td>
-        <td class="wrap">${esc(stackLabel(j.uses))}</td>
+        <td class="wrap">${esc(stackLabel(j.uses))}<div class="muted small">${esc(sourceLabel(j.uses))}</div></td>
         <td class="num">${money(j.cost)}${approx(j)}</td>
         <td class="num">${n0(j.energy)}</td>
         <td class="num">${j.gain == null ? '—' : n0(j.gain)}${j.stats.length ? ` <span class="muted">${esc(j.stats.join(', '))}</span>` : ''}</td>
@@ -197,12 +203,13 @@ export function createTrainingPage(ctx) {
       return `<tr>
         <td class="name"><div class="cell">${item?.image ? `<img src="${esc(item.image)}" alt="" loading="lazy">` : ''}<span>${esc(item?.name ?? `Item ${r.itemId}`)}</span>${e.jump ? ' <span class="tag found">jump</span>' : ''}</div></td>
         <td class="num">${n0(r.qty)}</td>
+        <td class="muted">${esc(sourceLabel({ qty: r.qty, freeQty: r.freeQty, unknownQty: r.unknownQty }))}</td>
         <td class="num">${money(r.value)}${approx(r)}</td>
         <td class="num muted">${money(r.qty ? r.value / r.qty : null)}</td>
         <td class="num">${e.energy ? n0(e.energy * r.qty) : ''}</td>
         <td class="muted">${esc(effectLabel(e))}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6" class="muted">No consumables used in this range.</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="muted">No consumables used in this range.</td></tr>';
   }
 
   function renderWeeks(weeks) {

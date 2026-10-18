@@ -17,7 +17,9 @@ import { isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, build
 const $ = (sel) => document.querySelector(sel);
 
 // Bump when the default free-item sources change, so earlier saved choices are replaced once.
-const FINDS_VERSION = 2;
+const FINDS_VERSION = 3;
+// Likewise for item use types: v2 ticks the per-drug and per-booster types ("Item use xanax").
+const USES_VERSION = 2;
 
 // ---------- storage (wrapped: private windows can throw) ----------
 const store = {
@@ -72,7 +74,7 @@ const settings = {
   },
   save() {
     const s = this.read();
-    store.set('settings', { ...s, bypassCache: false, findsVersion: FINDS_VERSION });
+    store.set('settings', { ...s, bypassCache: false, findsVersion: FINDS_VERSION, usesVersion: USES_VERSION });
   },
   restore() {
     const s = store.get('settings', null);
@@ -436,7 +438,8 @@ function renderLogTypes() {
   const finds = saved?.findsVersion === FINDS_VERSION ? saved.selectedFinds : null;
   list('#find-types', (t) => isFindLogTitle(t) && !isPurchaseLogTitle(t), isDefaultFindLog, finds, 'No find log types found.');
   list('#sell-types', isSellLogTitle, isDefaultSellLog, saved?.selectedSells?.length ? saved.selectedSells : null, 'No sale log types found.');
-  list('#use-types', isUseLogTitle, isDefaultUseLog, saved?.selectedUses?.length ? saved.selectedUses : null, 'No item use log types found.');
+  const uses = saved?.usesVersion === USES_VERSION && saved.selectedUses?.length ? saved.selectedUses : null;
+  list('#use-types', isUseLogTitle, isDefaultUseLog, uses, 'No item use log types found.');
   renderLogCounts();
 }
 
