@@ -108,14 +108,24 @@ export function detectJumps(uses, bursts, effectOf) {
   return jumps.reverse();
 }
 
-/** Uses combined per item: [{ itemId, qty, value, estimatedQty }], most expensive first. */
+/** Where used units came from: bought, free (crimes, finds, gifts) or unknown (no log before the use). */
+export function sources(uses) {
+  const free = uses.reduce((t, u) => t + (u.freeQty ?? 0), 0);
+  const unknown = uses.reduce((t, u) => t + (u.unknownQty ?? 0), 0);
+  const qty = uses.reduce((t, u) => t + u.qty, 0);
+  return { bought: qty - free - unknown, free, unknown };
+}
+
+/** Uses combined per item: [{ itemId, qty, value, estimatedQty, freeQty, unknownQty }], most expensive first. */
 export function usesByItem(uses) {
   const map = new Map();
   for (const u of uses) {
-    const r = map.get(u.itemId) ?? { itemId: u.itemId, qty: 0, value: 0, estimatedQty: 0 };
+    const r = map.get(u.itemId) ?? { itemId: u.itemId, qty: 0, value: 0, estimatedQty: 0, freeQty: 0, unknownQty: 0 };
     r.qty += u.qty;
     r.value += u.value;
     r.estimatedQty += u.estimatedQty;
+    r.freeQty += u.freeQty ?? 0;
+    r.unknownQty += u.unknownQty ?? 0;
     map.set(u.itemId, r);
   }
   return [...map.values()].sort((a, b) => b.value - a.value);

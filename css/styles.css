@@ -202,6 +202,7 @@ button.group-tag:hover { background: var(--panel); border-color: var(--accent); 
 .swatch.line { height: 0; width: 14px; border-top: 2px dashed var(--warn); background: none; border-radius: 0; }
 table.mini { width: 100%; }
 td.wrap { white-space: normal; min-width: 220px; }
+.small { font-size: 12px; }
 table.mini td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); white-space: normal; }
 table.mini td:not(:last-child) { white-space: nowrap; }
 

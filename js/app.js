@@ -17,7 +17,7 @@ import { isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, build
 const $ = (sel) => document.querySelector(sel);
 
 // Bump when the default free-item sources change, so earlier saved choices are replaced once.
-const FINDS_VERSION = 2;
+const FINDS_VERSION = 3;
 // Likewise for item use types: v2 ticks the per-drug and per-booster types ("Item use xanax").
 const USES_VERSION = 2;
 

@@ -79,3 +79,17 @@ test('weeklyTraining buckets by week', () => {
   assert.equal(rows[0].spend, 50);
   assert.equal(rows[1].energy, 30);
 });
+
+test('sources splits used units into bought, free and unknown', async () => {
+  const { buildLedger } = await import('../js/ledger.js');
+  const { sources } = await import('../js/training.js');
+  const L = (id, ts, type, data) => ({ id, timestamp: ts, data, details: { id: type, title: '' } });
+  const ledger = buildLedger([
+    L('crime', 1, 2, { item: 310, quantity: 2 }),
+    L('buy', 2, 1, { item: 310, quantity: 3, cost_each: 100 }),
+    L('eat', 3, 4, { item: 310, quantity: 6 }),
+  ], { purchaseIds: new Set([1]), findIds: new Set([2]), saleIds: new Set(), useIds: new Set([4]) });
+  const [use] = ledger.uses;
+  assert.equal(use.cost, 300); // the 2 crime lollipops are free
+  assert.deepEqual(sources([use]), { bought: 3, free: 2, unknown: 1 });
+});

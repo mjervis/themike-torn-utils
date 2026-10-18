@@ -58,3 +58,13 @@ test('default purchase log selection', () => {
   assert.ok(!isDefaultPurchaseLog('Item market sell'));
   assert.ok(!isDefaultPurchaseLog('Points market buy'));
 });
+
+test('gifts and faction payouts count as free item sources', async () => {
+  const { isDefaultFindLog } = await import('../js/costing.js');
+  for (const t of ['Item receive', 'Faction give item receive', 'Faction payout item receive', 'Seasonal gift items', 'Crime success item gain (new)']) {
+    assert.ok(isDefaultFindLog(t), t);
+  }
+  for (const t of ['Faction loan item receive', 'Trade items add other user', 'Money receive', 'Faction item receive ownership']) {
+    assert.ok(!isDefaultFindLog(t), t);
+  }
+});
