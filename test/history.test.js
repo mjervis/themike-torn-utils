@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSnapshot, snapshotTotals, series, snapshotOnOrBefore, itemChanges, utcDate } from '../js/history.js';
+import { buildSnapshot, snapshotTotals, series, snapshotOnOrBefore, itemChanges, utcDate, rebuildSnapshots, withRebuilt } from '../js/history.js';
 import { parseFind, lotsByItem, costBasis, isDefaultFindLog, isFindLogTitle, extractItems } from '../js/costing.js';
 
 const snap = (date, items) => ({ date, items });
@@ -75,4 +75,30 @@ test('find log title selection', () => {
   assert.ok(!isFindLogTitle('Crime fail'));
   assert.ok(!isFindLogTitle('Attack lost'));
   assert.ok(!isFindLogTitle('Crime success money gain'));
+});
+
+test('rebuildSnapshots walks holdings back through the ledger', () => {
+  const day = (d, h = 12) => Date.UTC(2026, 9, d, h) / 1000;
+  const current = { date: '2026-10-05', at: day(5), items: [{ id: 1, name: 'Lion', type: 'Plushie', qty: 3, price: 50, cost: 10 }] };
+  const ledger = {
+    acquisitions: [
+      { itemId: 1, qty: 5, unitCost: 10, timestamp: day(2) },
+      { itemId: 2, qty: 2, unitCost: 7, timestamp: day(2) },
+      { itemId: 1, qty: 3, unitCost: 10, timestamp: day(4) },
+    ],
+    sales: [{ itemId: 1, qty: 5, timestamp: day(3) }, { itemId: 2, qty: 2, timestamp: day(4) }],
+    uses: [],
+  };
+  const snaps = rebuildSnapshots(current, ledger, (id) => ({ name: `Item ${id}`, type: 'Flower', price: 20 }));
+  assert.deepEqual(snaps.map((s) => s.date), ['2026-10-02', '2026-10-03', '2026-10-04']);
+  const qty = (s) => Object.fromEntries(s.items.map((i) => [i.id, i.qty]));
+  assert.deepEqual(qty(snaps[0]), { 1: 5, 2: 2 });
+  assert.deepEqual(qty(snaps[1]), { 2: 2 });
+  assert.deepEqual(qty(snaps[2]), { 1: 3 });
+  assert.equal(snaps[0].items.find((i) => i.id === 2).cost, 7);
+  assert.ok(snaps.every((s) => s.estimated));
+  // A saved snapshot wins over a rebuilt one for the same day.
+  const merged = withRebuilt([{ date: '2026-10-03', items: [] }], snaps);
+  assert.equal(merged.filter((s) => s.date === '2026-10-03').length, 1);
+  assert.equal(merged.find((s) => s.date === '2026-10-03').estimated, undefined);
 });
