@@ -66,6 +66,19 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px; }
 .tos-table thead td { font-size: 12px; background: var(--panel-2); }
 
 .settings summary { cursor: pointer; font-weight: 600; }
+.key-panel h2, section.settings h2 { margin: 0 0 10px; font-size: 16px; }
+.key-panel .tos { margin-top: 12px; }
+section.settings fieldset { margin-bottom: 10px; }
+
+.key-dialog {
+  width: min(460px, calc(100vw - 32px)); padding: 20px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.key-dialog::backdrop { background: rgb(0 0 0 / .6); }
+.key-dialog h2 { margin: 0 0 8px; font-size: 18px; }
+.key-dialog form { display: flex; flex-direction: column; gap: 10px; }
+.key-dialog .hint { margin: 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
 .settings-grid label:not(.check) { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 fieldset { border: 1px solid var(--border); border-radius: 6px; }

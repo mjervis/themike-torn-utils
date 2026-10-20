@@ -15,130 +15,14 @@
       <a href="#inventory" data-page="inventory">Inventory profit</a>
       <a href="#energy" data-page="energy">Energy</a>
       <a href="#training" data-page="training">Training cost</a>
+      <a href="#settings" data-page="settings">Settings</a>
     </nav>
-    <form id="key-form" class="key-form" autocomplete="off">
-      <label for="api-key" class="sr-only">Torn API key</label>
-      <input id="api-key" type="password" placeholder="Full access API key" spellcheck="false" required>
-      <label class="check"><input id="remember-key" type="checkbox"> Remember on this device</label>
-      <button type="submit" id="load-btn">Load</button>
-    </form>
   </header>
 
   <main>
-    <details id="tos" class="panel tos" open>
-      <summary>API key use &amp; Terms of Service</summary>
-      <p>You keep full control of your data. This page runs entirely in your browser and talks only to
-        <code>api.torn.com</code> — there is no server, and nothing is sent anywhere else.</p>
-      <div class="table-wrap">
-        <table class="tos-table">
-          <thead>
-            <tr>
-              <th>Data Storage</th>
-              <th>Data Sharing</th>
-              <th>Purpose of Use</th>
-              <th>Key Storage &amp; Sharing</th>
-              <th>Key Access Level</th>
-            </tr>
-            <tr class="muted">
-              <td>Will the data be stored for any purpose?</td>
-              <td>Who can access the data besides the end user?</td>
-              <td>What is the stored data being used for?</td>
-              <td>Will the API key be stored securely and who can access it?</td>
-              <td>What key access level or specific selections are required?</td>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Only locally, in your browser — your log history, daily snapshots, cached inventory &amp; prices, settings and manual costs. Persistent until you clear it with the button below.</td>
-              <td>Nobody</td>
-              <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, and your own energy use against your gym target.</td>
-              <td>Stored locally only if you tick “Remember” / Not shared</td>
-              <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p><strong>Recommended:</strong>
-        <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
-        with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
-        You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
-      <p><button type="button" id="forget-btn" class="secondary">Forget my key &amp; clear saved data</button></p>
-    </details>
-
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <div id="page-inventory" class="page">
-    <details id="settings" class="panel settings">
-      <summary>Settings</summary>
-      <div class="settings-grid">
-        <label>Item market fee %
-          <input id="market-fee" type="number" min="0" max="100" step="0.5" value="5">
-        </label>
-        <label>Extra anonymous fee %
-          <input id="anon-fee" type="number" min="0" max="100" step="0.5" value="10">
-        </label>
-        <label>Cost basis
-          <select id="cost-method">
-            <option value="recent">Most recent purchases &amp; finds (FIFO)</option>
-            <option value="average">Average of all purchases &amp; finds</option>
-          </select>
-        </label>
-        <label>Log pages per history scan (100 each)
-          <input id="log-pages" type="number" min="1" max="200" value="20">
-        </label>
-        <label>Market price source
-          <select id="price-source">
-            <option value="market_price">Torn market value</option>
-            <option value="lowest">Lowest item market listing</option>
-          </select>
-        </label>
-        <label class="check"><input id="bypass-cache" type="checkbox"> Force refresh on next load (ignore saved inventory &amp; prices)</label>
-      </div>
-      <fieldset>
-        <legend>Item types counted as trade goods</legend>
-        <p class="hint">Everything else is treated as personal use. Click the Trade / Personal tag on any row to override a single item.</p>
-        <div id="trade-types" class="log-types"></div>
-        <p><button type="button" id="reset-trade-types" class="secondary">Reset to typical trade goods</button>
-          <button type="button" id="clear-item-groups" class="secondary">Clear per-item overrides</button></p>
-      </fieldset>
-      <fieldset>
-        <legend>Purchase log types to read</legend>
-        <div id="log-types" class="log-types"><em>Load once to see available log types.</em></div>
-      </fieldset>
-      <fieldset>
-        <legend>Free item sources ($0 cost)</legend>
-        <p class="hint">Items from these logs — crimes, city and dump finds, attack loot, rewards, and items given to you — count as costing nothing.
-          Torn doesn't publish a list of these, so they're picked by name; untick anything that isn't an item find.</p>
-        <div id="find-types" class="log-types"><em>Load once to see available log types.</em></div>
-      </fieldset>
-      <fieldset>
-        <legend>Sale log types</legend>
-        <p class="hint">Sales are matched against your oldest purchases first to work out realised profit on the Trading tab.
-          Where a log doesn't state a fee, item market sales are charged the fee above.</p>
-        <div id="sell-types" class="log-types"><em>Load once to see available log types.</em></div>
-      </fieldset>
-      <fieldset>
-        <legend>Trade log types</legend>
-        <p class="hint">Direct trades with other players. Items you give count as sold for the money you get, and items you get as bought for the money you pay.
-          When a trade has several items, the money is split between them by Torn market value.</p>
-        <div id="trade-log-types" class="log-types"><em>Load once to see available log types.</em></div>
-      </fieldset>
-      <fieldset>
-        <legend>Item use log types</legend>
-        <p class="hint">Items you use (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…) come out of stock here and are costed on the Training cost page.</p>
-        <div id="use-types" class="log-types"><em>Load once to see available log types.</em></div>
-      </fieldset>
-      <fieldset>
-        <legend>Your saved data</legend>
-        <p class="hint" id="saved-summary">Nothing saved yet.</p>
-        <p>
-          <button type="button" id="older-logs" class="secondary">Read older log history</button>
-          <button type="button" id="export-btn" class="secondary">Download backup</button>
-          <label class="file-btn secondary">Restore backup<input type="file" id="import-file" accept="application/json,.json" hidden></label>
-        </p>
-      </fieldset>
-    </details>
-
     <section id="results" hidden>
       <div class="toolbar">
         <span class="muted" id="inv-asof"></span>
@@ -234,7 +118,7 @@
           </table>
         </div>
         <p class="footnote">Realised profit matches each sale against your oldest purchases and finds first, using sale proceeds after fees.
-          Units sold with no purchase on record (e.g. bought before your saved log history) aren't counted in realised profit — “Read older log history” in Settings can fill the gap.
+          Units sold with no purchase on record (e.g. bought before your saved log history) aren't counted in realised profit — “Read older log history” on the Settings tab can fill the gap.
           Unrealised profit is what you hold now, valued with the Sell via choice above. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.</p>
       </div>
 
@@ -378,9 +262,131 @@
         <p class="footnote">A <strong>jump</strong> is a burst of gym training with Ecstasy or a big happy item (erotic DVD etc.) used within the hour before it;
           everything you used since your previous training — the stacked Xanax, cans and so on, up to 3 days back — counts towards it.
           Consumables are costed at what they cost you, oldest stock used first: bought units at the price you paid, and units from crimes, finds, gifts and faction payouts at $0
-          (the free sources are set under Inventory profit → Settings). Anything with no purchase or find on record is valued at today's market price and marked ≈.
-          Points refills cost points rather than cash, so they aren't included. Item use logs come from Settings → Item use log types on the Inventory page.
+          (the free sources are set on the Settings tab). Anything with no purchase or find on record is valued at today's market price and marked ≈.
+          Points refills cost points rather than cash, so they aren't included. Item use logs come from Settings → Item use log types.
           Weeks follow the start day set on the Energy page.</p>
+      </section>
+    </div>
+    <div id="page-settings" class="page" hidden>
+      <section class="panel key-panel">
+        <h2>Torn API key</h2>
+        <form id="key-form" class="key-form" autocomplete="off">
+          <label for="api-key" class="sr-only">Torn API key</label>
+          <input id="api-key" type="password" placeholder="Full access API key" spellcheck="false" required>
+          <label class="check"><input id="remember-key" type="checkbox"> Remember on this device</label>
+          <button type="submit" id="load-btn">Load</button>
+          <button type="button" id="forget-btn" class="secondary">Forget my key &amp; clear saved data</button>
+        </form>
+        <details id="tos" class="tos" open>
+          <summary>API key use &amp; Terms of Service</summary>
+          <p>You keep full control of your data. This page runs entirely in your browser and talks only to
+            <code>api.torn.com</code> — there is no server, and nothing is sent anywhere else.</p>
+          <div class="table-wrap">
+            <table class="tos-table">
+              <thead>
+                <tr>
+                  <th>Data Storage</th>
+                  <th>Data Sharing</th>
+                  <th>Purpose of Use</th>
+                  <th>Key Storage &amp; Sharing</th>
+                  <th>Key Access Level</th>
+                </tr>
+                <tr class="muted">
+                  <td>Will the data be stored for any purpose?</td>
+                  <td>Who can access the data besides the end user?</td>
+                  <td>What is the stored data being used for?</td>
+                  <td>Will the API key be stored securely and who can access it?</td>
+                  <td>What key access level or specific selections are required?</td>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Only locally, in your browser — your log history, daily snapshots, cached inventory &amp; prices, settings and manual costs. Persistent until you clear it with the button below.</td>
+                  <td>Nobody</td>
+                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, and your own energy use against your gym target.</td>
+                  <td>Stored locally only if you tick “Remember” / Not shared</td>
+                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>Recommended:</strong>
+            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+            with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
+            You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
+        </details>
+      </section>
+
+      <section id="settings" class="panel settings">
+        <h2>Inventory, trading &amp; training</h2>
+        <p class="hint">These apply on every tab.</p>
+        <div class="settings-grid">
+          <label>Item market fee %
+            <input id="market-fee" type="number" min="0" max="100" step="0.5" value="5">
+          </label>
+          <label>Extra anonymous fee %
+            <input id="anon-fee" type="number" min="0" max="100" step="0.5" value="10">
+          </label>
+          <label>Cost basis
+            <select id="cost-method">
+              <option value="recent">Most recent purchases &amp; finds (FIFO)</option>
+              <option value="average">Average of all purchases &amp; finds</option>
+            </select>
+          </label>
+          <label>Log pages per history scan (100 each)
+            <input id="log-pages" type="number" min="1" max="200" value="20">
+          </label>
+          <label>Market price source
+            <select id="price-source">
+              <option value="market_price">Torn market value</option>
+              <option value="lowest">Lowest item market listing</option>
+            </select>
+          </label>
+          <label class="check"><input id="bypass-cache" type="checkbox"> Force refresh on next load (ignore saved inventory &amp; prices)</label>
+        </div>
+        <fieldset>
+          <legend>Item types counted as trade goods</legend>
+          <p class="hint">Everything else is treated as personal use. Click the Trade / Personal tag on any row to override a single item.</p>
+          <div id="trade-types" class="log-types"></div>
+          <p><button type="button" id="reset-trade-types" class="secondary">Reset to typical trade goods</button>
+            <button type="button" id="clear-item-groups" class="secondary">Clear per-item overrides</button></p>
+        </fieldset>
+        <fieldset>
+          <legend>Purchase log types to read</legend>
+          <div id="log-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Free item sources ($0 cost)</legend>
+          <p class="hint">Items from these logs — crimes, city and dump finds, attack loot, rewards, and items given to you — count as costing nothing.
+            Torn doesn't publish a list of these, so they're picked by name; untick anything that isn't an item find.</p>
+          <div id="find-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Sale log types</legend>
+          <p class="hint">Sales are matched against your oldest purchases first to work out realised profit on the Trading tab.
+            Where a log doesn't state a fee, item market sales are charged the fee above.</p>
+          <div id="sell-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Trade log types</legend>
+          <p class="hint">Direct trades with other players. Items you give count as sold for the money you get, and items you get as bought for the money you pay.
+            When a trade has several items, the money is split between them by Torn market value.</p>
+          <div id="trade-log-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Item use log types</legend>
+          <p class="hint">Items you use (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…) come out of stock here and are costed on the Training cost page.</p>
+          <div id="use-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Your saved data</legend>
+          <p class="hint" id="saved-summary">Nothing saved yet.</p>
+          <p>
+            <button type="button" id="older-logs" class="secondary">Read older log history</button>
+            <button type="button" id="export-btn" class="secondary">Download backup</button>
+            <label class="file-btn secondary">Restore backup<input type="file" id="import-file" accept="application/json,.json" hidden></label>
+          </p>
+        </fieldset>
       </section>
     </div>
   </main>
@@ -388,6 +394,23 @@
   <footer class="foot">
     Unofficial tool. Data from the <a href="https://www.torn.com/swagger.php" target="_blank" rel="noopener">Torn API v2</a>.
   </footer>
+
+  <dialog id="key-dialog" class="key-dialog" aria-labelledby="key-dialog-title">
+    <form id="key-dialog-form" method="dialog" autocomplete="off">
+      <h2 id="key-dialog-title">Add your Torn API key</h2>
+      <p id="key-dialog-saved" class="hint" hidden>Your saved data is showing behind this — add your key to bring it up to date.</p>
+      <p class="hint">The key stays in this browser and is only sent to <code>api.torn.com</code>.
+        <a id="dialog-key-link" target="_blank" rel="noopener">Create a custom key</a> with just the access this app needs, or use a Full Access key.
+        <a href="#settings" id="dialog-tos">How your key and data are used</a>.</p>
+      <label for="dialog-key" class="sr-only">Torn API key</label>
+      <input id="dialog-key" type="password" placeholder="API key" spellcheck="false" required>
+      <label class="check"><input id="dialog-remember" type="checkbox" checked> Remember on this device</label>
+      <div class="dialog-actions">
+        <button type="button" id="dialog-later" class="secondary">Not now</button>
+        <button type="submit" value="load">Load</button>
+      </div>
+    </form>
+  </dialog>
 
   <script type="module" src="js/app.js"></script>
 </body>
