@@ -14,6 +14,89 @@ export function buildSnapshot(rows, now = Math.floor(Date.now() / 1000)) {
   };
 }
 
+/**
+ * Rebuild a snapshot for each day before `current`, back to the oldest ledger event, by walking
+ * the ledger backwards from what you hold now: a day's quantity is today's, less what came in
+ * since, plus what went out since. Unit cost is the first-in-first-out cost of the units held at
+ * the end of that day (else today's cost); prices are today's, as the logs don't record market
+ * prices. Rebuilt snapshots are marked `estimated`.
+ *
+ * @param {object} current  today's snapshot (buildSnapshot)
+ * @param {{ acquisitions: object[], sales: object[], uses: object[] }} ledger  from buildLedger
+ * @param {(id: number) => { name, type, price } | null} item  details for items not held now
+ */
+export function rebuildSnapshots(current, ledger, item = () => null) {
+  const events = [
+    ...ledger.acquisitions.map((e) => ({ ...e, in: true })),
+    ...ledger.sales, ...ledger.uses,
+  ].filter((e) => e.timestamp <= current.at)
+    .sort((a, b) => a.timestamp - b.timestamp || (a.in ? -1 : 1) - (b.in ? -1 : 1));
+  if (!events.length) return [];
+
+  const dayStart = (date) => Date.parse(`${date}T00:00:00Z`) / 1000;
+  const dates = [];
+  for (let t = dayStart(utcDate(events[0].timestamp)); utcDate(t) < current.date; t += 86400) dates.push(utcDate(t));
+  if (!dates.length) return [];
+
+  // Forward pass: FIFO queues give the average cost of the units held at the end of each day.
+  const queues = new Map();
+  const costs = new Map(); // date -> Map(itemId -> unit cost)
+  let i = 0;
+  for (const date of dates) {
+    const end = dayStart(date) + 86400;
+    for (; i < events.length && events[i].timestamp < end; i++) {
+      const e = events[i];
+      const q = queues.get(e.itemId) ?? [];
+      queues.set(e.itemId, q);
+      if (e.in) { q.push({ qty: e.qty, unitCost: e.unitCost ?? 0 }); continue; }
+      let left = e.qty;
+      while (left > 0 && q.length) {
+        const take = Math.min(q[0].qty, left);
+        q[0].qty -= take;
+        left -= take;
+        if (q[0].qty <= 0) q.shift();
+      }
+    }
+    const day = new Map();
+    for (const [id, q] of queues) {
+      const qty = q.reduce((s, l) => s + l.qty, 0);
+      if (qty > 0) day.set(id, q.reduce((s, l) => s + l.qty * l.unitCost, 0) / qty);
+    }
+    costs.set(date, day);
+  }
+
+  // Backward pass from today's holdings.
+  const now = new Map(current.items.map((it) => [it.id, it]));
+  const qty = new Map(current.items.map((it) => [it.id, it.qty]));
+  const out = [];
+  let j = events.length - 1;
+  for (let d = dates.length - 1; d >= 0; d--) {
+    const date = dates[d];
+    const end = dayStart(date) + 86400;
+    for (; j >= 0 && events[j].timestamp >= end; j--) {
+      const e = events[j];
+      qty.set(e.itemId, (qty.get(e.itemId) ?? 0) + (e.in ? -e.qty : e.qty));
+    }
+    const items = [];
+    for (const [id, n] of qty) {
+      if (n <= 0) continue;
+      const base = now.get(id) ?? item(id);
+      items.push({
+        id, name: base?.name ?? `Item ${id}`, type: base?.type ?? null, qty: n,
+        price: base?.price ?? null, cost: costs.get(date).get(id) ?? now.get(id)?.cost ?? null,
+      });
+    }
+    out.push({ date, at: end - 1, items, estimated: true });
+  }
+  return out.reverse();
+}
+
+/** Saved snapshots, with rebuilt ones filling the days that have none. */
+export function withRebuilt(saved, rebuilt) {
+  const have = new Set(saved.map((s) => s.date));
+  return [...saved, ...rebuilt.filter((s) => !have.has(s.date))];
+}
+
 /** Totals for one snapshot, for the items `include` accepts, after a sale fee. */
 export function snapshotTotals(snap, include, fee) {
   let value = 0, paid = 0, costedNet = 0, count = 0;
@@ -27,7 +110,7 @@ export function snapshotTotals(snap, include, fee) {
       costedNet += it.qty * it.price * (1 - fee);
     }
   }
-  return { date: snap.date, at: snap.at, value, paid, profit: costedNet - paid, count };
+  return { date: snap.date, at: snap.at, value, paid, profit: costedNet - paid, count, estimated: !!snap.estimated };
 }
 
 /** Totals per day, oldest first, limited to the last `days` days (null = all). */
@@ -89,7 +172,7 @@ function niceTicks(min, max, count = 4) {
 
 /**
  * Single-series line chart with a crosshair tooltip.
- * points: [{ label, value, t }] — t (any number, e.g. a timestamp) positions points on the x axis
+ * points: [{ label, value, t, note }] — note (optional) is added to the tooltip; t (any number, e.g. a timestamp) positions points on the x axis
  * so gaps between days show as gaps; without it points are evenly spaced. fmt formats values.
  */
 export function lineChart(container, points, { fmt, shortFmt = fmt, zeroLine = false, ariaLabel }) {
@@ -148,7 +231,7 @@ export function lineChart(container, points, { fmt, shortFmt = fmt, zeroLine = f
     marker.setAttribute('cx', x(i)); marker.setAttribute('cy', y(p.value));
     cross.setAttribute('visibility', 'visible'); marker.setAttribute('visibility', 'visible');
     tipValue.textContent = fmt(p.value);
-    tipLabel.textContent = p.label;
+    tipLabel.textContent = p.note ? `${p.label} · ${p.note}` : p.label;
     tip.hidden = false;
     const pct = x(i) / W;
     tip.style.left = `${pct * 100}%`;

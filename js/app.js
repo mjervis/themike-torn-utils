@@ -8,7 +8,9 @@ import {
   keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory,
   syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor, savedLogs,
 } from './sync.js';
-import { buildSnapshot, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart } from './history.js';
+import {
+  buildSnapshot, rebuildSnapshots, withRebuilt, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart,
+} from './history.js';
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
@@ -689,22 +691,36 @@ function shortMoney(n) {
 }
 const signed = (n) => `${n > 0 ? '+' : ''}${money(n)}`;
 
+/** Saved snapshots, plus days before them rebuilt from the logs (see rebuildSnapshots). */
+function historySnapshots(s) {
+  const anchor = state.holdings.length
+    ? buildSnapshot(buildRows(), state.inventoryAt ?? undefined)
+    : [...state.snapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (!anchor || !state.rawLogs.size) return state.snapshots;
+  const item = (id) => {
+    const it = state.catalog.get(id);
+    return it ? { name: it.name, type: it.type, price: unitPrice(id, s.priceSource) } : null;
+  };
+  return withRebuilt(state.snapshots, rebuildSnapshots(anchor, ledgerFor([...state.rawLogs.values()], s), item));
+}
+
 function renderHistory() {
   const s = settings.read();
   const route = saleRoutes(s)[s.route];
   const include = historyFilter();
-  const pts = series(state.snapshots, include, route.fee, s.range === 'all' ? null : Number(s.range));
+  const snapshots = historySnapshots(s);
+  const pts = series(snapshots, include, route.fee, s.range === 'all' ? null : Number(s.range));
 
-  lineChart($('#chart-value'), pts.map((p) => ({ label: dayLabel(p.date), value: p.value, t: Date.parse(p.date) })),
+  lineChart($('#chart-value'), pts.map((p) => ({ label: dayLabel(p.date), note: p.estimated ? 'rebuilt from logs' : null, value: p.value, t: Date.parse(p.date) })),
     { fmt: money, shortFmt: shortMoney, ariaLabel: 'Market value by day' });
-  lineChart($('#chart-profit'), pts.map((p) => ({ label: dayLabel(p.date), value: p.profit, t: Date.parse(p.date) })),
+  lineChart($('#chart-profit'), pts.map((p) => ({ label: dayLabel(p.date), note: p.estimated ? 'rebuilt from logs' : null, value: p.profit, t: Date.parse(p.date) })),
     { fmt: money, shortFmt: shortMoney, zeroLine: true, ariaLabel: 'Profit after fees by day' });
   $('#profit-caption').textContent = `Profit after fees · ${route.label}`;
 
   const latest = pts[pts.length - 1];
   const now = Math.floor(Date.now() / 1000);
   const delta = (daysBack) => {
-    const snap = snapshotOnOrBefore(state.snapshots, utcDate(now - daysBack * 86400));
+    const snap = snapshotOnOrBefore(snapshots, utcDate(now - daysBack * 86400));
     if (!snap || !latest || snap.date === latest.date) return null;
     const then = series([snap], include, route.fee)[0];
     return { value: latest.value - then.value, profit: latest.profit - then.profit, date: snap.date };
@@ -716,8 +732,8 @@ function renderHistory() {
     <div class="card"><div class="label">Market value now</div><div class="value">${money(latest?.value)}</div><div class="sub">${latest ? `${latest.count} items · ${esc(viewLabel())}` : 'no snapshots yet'}</div></div>
     ${card('Since yesterday', delta(1))}${card('Last 7 days', delta(7))}${card('Last 30 days', delta(30))}`;
 
-  const first = pts.length > 1 ? state.snapshots.find((x) => x.date === pts[0].date) : null;
-  const last = latest && state.snapshots.find((x) => x.date === latest.date);
+  const first = pts.length > 1 ? snapshots.find((x) => x.date === pts[0].date) : null;
+  const last = latest && snapshots.find((x) => x.date === latest.date);
   const changes = first && last ? itemChanges(first, last, include) : [];
   $('#changes-title').textContent = first ? `Changes since ${dayLabel(first.date)}` : 'Changes';
   $('#changes-table tbody').innerHTML = changes.slice(0, 100).map((c) => `
@@ -727,7 +743,7 @@ function renderHistory() {
     || `<tr><td colspan="6" class="muted">${pts.length < 2 ? 'Changes appear once there are snapshots from at least two days.' : 'No changes in this range.'}</td></tr>`;
 
   $('#daily-table tbody').innerHTML = [...pts].reverse().map((p) => `
-    <tr><td>${p.date}</td><td class="num">${p.count}</td><td class="num">${money(p.value)}</td><td class="num">${money(p.paid)}</td>
+    <tr><td>${p.date}${p.estimated ? ' <span class="tag" title="Rebuilt from your logs at today\'s prices">rebuilt</span>' : ''}</td><td class="num">${p.count}</td><td class="num">${money(p.value)}</td><td class="num">${money(p.paid)}</td>
     <td class="num ${signClass(p.profit)}">${money(p.profit)}</td></tr>`).join('');
 }
 
