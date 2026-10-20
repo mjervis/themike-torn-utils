@@ -85,6 +85,70 @@ export function parseSale(log, { marketFee = 0.05, anonFee = 0.10 } = {}) {
   }));
 }
 
+/** Logs of the trade window (direct trades with another player). */
+export function isTradeLogTitle(title) {
+  return /^trade\b/i.test(title.trim());
+}
+
+// A completed trade writes what changed hands as items/money incoming and outgoing.
+const TRADE_SIDE = /^trade (items|money) (incoming|outgoing)$/i;
+
+export function isDefaultTradeLog(title) {
+  return TRADE_SIDE.test(title.trim());
+}
+
+/**
+ * Turn trade logs into sales and purchases. Logs are grouped by trade id; one money total covers
+ * every item in the trade, so it is split across them by `value(itemId)` (Torn market value now),
+ * falling back to an even split per unit. Items received in a swap are costed at their market value,
+ * and the items you gave count as sold for that value plus any money you came out ahead.
+ * @returns {{ sales: object[], purchases: object[] }} in the shapes parseSale and parsePurchase return
+ */
+export function parseTrades(logs, value = () => null) {
+  const trades = new Map();
+  for (const log of logs) {
+    const side = TRADE_SIDE.exec(log.details?.title?.trim() ?? '');
+    if (!side) continue;
+    const d = log.data ?? {};
+    const key = d.parsed_trade_id ?? `${d.user}:${log.timestamp}`;
+    if (!trades.has(key)) trades.set(key, { key, timestamp: 0, cash: 0, out: [], in: [] });
+    const t = trades.get(key);
+    t.timestamp = Math.max(t.timestamp, log.timestamp);
+    const incoming = side[2].toLowerCase() === 'incoming';
+    if (side[1].toLowerCase() === 'money') t.cash += (num(d.money) ?? 0) * (incoming ? 1 : -1);
+    else t[incoming ? 'in' : 'out'].push(...extractItems(d));
+  }
+
+  const sales = [], purchases = [];
+  for (const t of trades.values()) {
+    const base = { timestamp: t.timestamp, logId: `trade:${t.key}`, title: 'Trade' };
+    // What the items you received are worth, at market value.
+    const inValue = t.in.reduce((s, i) => s + i.qty * (value(i.id) ?? 0), 0);
+    if (t.out.length) {
+      const total = (t.in.length ? inValue : 0) + t.cash;
+      for (const { item, unit } of split(t.out, total, value)) {
+        sales.push({ ...base, itemId: item.id, qty: item.qty, unitGross: unit, unitNet: unit, feeEstimated: false });
+      }
+    }
+    if (t.in.length) {
+      const total = t.out.length ? inValue : -t.cash;
+      for (const { item, unit } of split(t.in, total, value)) {
+        purchases.push({ ...base, itemId: item.id, qty: item.qty, unitCost: unit, kind: 'purchase', approximate: t.in.length > 1 });
+      }
+    }
+  }
+  return { sales, purchases };
+}
+
+/** Share `total` across items by market value (unknown values take the average of the known ones). */
+function split(items, total, value) {
+  const known = items.map((i) => value(i.id)).filter((v) => v > 0);
+  const fallback = known.length ? known.reduce((s, v) => s + v, 0) / known.length : 1;
+  const weight = (i) => (value(i.id) > 0 ? value(i.id) : fallback);
+  const sum = items.reduce((s, i) => s + i.qty * weight(i), 0);
+  return items.map((item) => ({ item, unit: sum > 0 ? (total * weight(item)) / sum : 0 }));
+}
+
 /** Convert one item-use log into disposals: [{ itemId, qty, timestamp, logId, title }]. */
 export function parseUse(log) {
   return extractItems(log?.data).map((i) => ({
@@ -100,11 +164,19 @@ export function parseUse(log) {
  * Sales also gain `realised` = net proceeds of the matched units minus their cost.
  *
  * @param {object[]} logs   saved logs of any of the types below
- * @param {{ purchaseIds: Set<number>, findIds: Set<number>, saleIds: Set<number>, useIds: Set<number> }} types
+ * Trade logs (`tradeIds`) become sales and purchases too; `value(itemId)` splits a trade's money
+ * across its items (see parseTrades).
+ *
+ * @param {object[]} logs   saved logs of any of the types below
+ * @param {{ purchaseIds: Set<number>, findIds: Set<number>, saleIds: Set<number>, useIds: Set<number>, tradeIds?: Set<number> }} types
  * @returns {{ acquisitions: object[], sales: object[], uses: object[] }} each newest first
  */
-export function buildLedger(logs, { purchaseIds, findIds, saleIds, useIds }, fees = {}) {
-  const events = [];
+export function buildLedger(logs, { purchaseIds, findIds, saleIds, useIds, tradeIds = new Set() }, fees = {}, value) {
+  const trades = parseTrades(logs.filter((l) => tradeIds.has(l.details?.id)), value);
+  const events = [
+    ...trades.purchases.map((e) => ({ ...e, side: 'in' })),
+    ...trades.sales.map((e) => ({ ...e, side: 'out', kind: 'sale' })),
+  ];
   for (const log of logs) {
     const t = log.details?.id;
     if (findIds.has(t)) events.push(...parseFind(log).map((e) => ({ ...e, side: 'in' })));

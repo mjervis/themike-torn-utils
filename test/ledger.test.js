@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog,
-  parseSale, buildLedger, tradeSummary, realisedByDay,
+  parseSale, buildLedger, tradeSummary, realisedByDay, isTradeLogTitle, isDefaultTradeLog, parseTrades,
 } from '../js/ledger.js';
 
 const log = (id, timestamp, type, data, title = '') => ({ id, timestamp, data, details: { id: type, title } });
@@ -90,4 +90,52 @@ test('realisedByDay is a running total', () => {
   const day = 86400;
   const pts = realisedByDay([{ timestamp: day + 5, realised: 10 }, { timestamp: 5, realised: 5 }, { timestamp: day + 9, realised: -3 }]);
   assert.deepEqual(pts.map((p) => p.total), [5, 12]);
+});
+
+// Shapes from real Torn trade logs (trade 13597838: two items out for $2,992,000).
+const trade = (id, ts, type, title, data) => log(id, ts, type, { user: 4041133, parsed_trade_id: 13597838, ...data }, title);
+
+test('trade log titles', () => {
+  for (const t of ['Trade items outgoing', 'Trade items incoming', 'Trade money incoming', 'Trade money outgoing']) assert.ok(isDefaultTradeLog(t), t);
+  for (const t of ['Trade completed', 'Trade items add', 'Trade money add other user', 'Trade initiate outgoing']) {
+    assert.ok(isTradeLogTitle(t), t);
+    assert.ok(!isDefaultTradeLog(t), t);
+  }
+  assert.ok(!isTradeLogTitle('Item market sell'));
+});
+
+test('parseTrades sells the items you gave for the money you got, split by market value', () => {
+  const { sales, purchases } = parseTrades([
+    trade('a', 100, 4441, 'Trade money incoming', { money: 3000 }),
+    trade('b', 100, 4445, 'Trade items outgoing', { items: [{ id: 1484, uid: null, qty: 2 }, { id: 1494, uid: null, qty: 1 }] }),
+    trade('c', 90, 4480, 'Trade money add other user', { money: 3000, total: 3000 }),
+  ], (id) => ({ 1484: 1000, 1494: 2000 })[id]);
+  assert.equal(purchases.length, 0);
+  assert.deepEqual(sales.map((x) => [x.itemId, x.qty, x.unitNet]), [[1484, 2, 750], [1494, 1, 1500]]);
+  assert.equal(sales[0].timestamp, 100);
+});
+
+test('parseTrades buys items paid for with money, and costs a swap at market value', () => {
+  const bought = parseTrades([
+    log('a', 100, 4440, { parsed_trade_id: 7, money: 500 }, 'Trade money outgoing'),
+    log('b', 100, 4446, { parsed_trade_id: 7, items: [{ id: 5, qty: 5 }] }, 'Trade items incoming'),
+  ]);
+  assert.deepEqual(bought.purchases.map((x) => [x.itemId, x.qty, x.unitCost]), [[5, 5, 100]]);
+  const swap = parseTrades([
+    log('a', 100, 4445, { parsed_trade_id: 8, items: [{ id: 1, qty: 1 }] }, 'Trade items outgoing'),
+    log('b', 100, 4446, { parsed_trade_id: 8, items: [{ id: 2, qty: 2 }] }, 'Trade items incoming'),
+    log('c', 100, 4441, { parsed_trade_id: 8, money: 100 }, 'Trade money incoming'),
+  ], (id) => ({ 1: 900, 2: 400 })[id]);
+  assert.equal(swap.sales[0].unitNet, 900); // 2 × 400 received + $100
+  assert.equal(swap.purchases[0].unitCost, 400);
+});
+
+test('buildLedger counts trades as sales against earlier purchases', () => {
+  const ledger = buildLedger([
+    log('p', 50, 1, { item: 1484, quantity: 2, cost_each: 600 }),
+    trade('a', 100, 4441, 'Trade money incoming', { money: 2000 }),
+    trade('b', 100, 4445, 'Trade items outgoing', { items: [{ id: 1484, qty: 2 }] }),
+  ], { ...types, tradeIds: new Set([4441, 4445]) });
+  assert.equal(ledger.sales.length, 1);
+  assert.equal(ledger.sales[0].realised, 2000 - 1200);
 });
