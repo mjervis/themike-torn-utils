@@ -12,7 +12,10 @@ import { buildSnapshot, series, snapshotOnOrBefore, itemChanges, utcDate, lineCh
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
-import { isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, buildLedger, tradeSummary, realisedByDay } from './ledger.js';
+import {
+  isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
+  buildLedger, parseTrades, tradeSummary, realisedByDay,
+} from './ledger.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -69,6 +72,7 @@ const settings = {
       selectedFinds: [...document.querySelectorAll('#find-types input:checked')].map((i) => Number(i.value)),
       selectedSells: [...document.querySelectorAll('#sell-types input:checked')].map((i) => Number(i.value)),
       selectedUses: [...document.querySelectorAll('#use-types input:checked')].map((i) => Number(i.value)),
+      selectedTrades: [...document.querySelectorAll('#trade-log-types input:checked')].map((i) => Number(i.value)),
       range: document.querySelector('input[name=range]:checked').value,
     };
   },
@@ -93,15 +97,18 @@ const settings = {
   },
 };
 
-/** Every log type the inventory and trading figures read: purchases, finds, sales and item uses. */
-const ledgerLogIds = (s = settings.read()) => [...s.selectedLogs, ...s.selectedFinds, ...s.selectedSells, ...s.selectedUses];
+/** Every log type the inventory and trading figures read: purchases, finds, sales, item uses and trades. */
+const ledgerLogIds = (s = settings.read()) => [...s.selectedLogs, ...s.selectedFinds, ...s.selectedSells, ...s.selectedUses, ...s.selectedTrades];
+
+/** Torn market value, used to split one trade's money across the items in it. */
+const marketValue = (id) => state.catalog.get(id)?.value?.market_price || null;
 
 /** Purchases, finds, sales and uses matched oldest first (see ledger.js). */
 function ledgerFor(logs, s = settings.read()) {
   return buildLedger(logs, {
     purchaseIds: new Set(s.selectedLogs), findIds: new Set(s.selectedFinds),
-    saleIds: new Set(s.selectedSells), useIds: new Set(s.selectedUses),
-  }, { marketFee: s.marketFee / 100, anonFee: s.anonFee / 100 });
+    saleIds: new Set(s.selectedSells), useIds: new Set(s.selectedUses), tradeIds: new Set(s.selectedTrades),
+  }, { marketFee: s.marketFee / 100, anonFee: s.anonFee / 100 }, marketValue);
 }
 
 // ---------- formatting ----------
@@ -277,9 +284,17 @@ function aggregate(items) {
 
 function applyLogs(logs) {
   state.rawLogs = new Map(logs.map((l) => [l.id, l]));
-  const purchases = new Set(settings.read().selectedLogs);
+  const s = settings.read();
+  const purchases = new Set(s.selectedLogs);
+  const trades = new Set(s.selectedTrades);
   // Sales and uses are only for the ledger; the holdings cost basis comes from what came in.
   state.lots = lotsByItem(logs.filter((l) => purchases.has(l.details?.id) || state.findTypeIds.has(l.details?.id)), state.findTypeIds);
+  // Items bought through the trade window are lots too.
+  for (const lot of parseTrades(logs.filter((l) => trades.has(l.details?.id)), marketValue).purchases) {
+    if (!state.lots.has(lot.itemId)) state.lots.set(lot.itemId, []);
+    state.lots.get(lot.itemId).push(lot);
+  }
+  for (const lots of state.lots.values()) lots.sort((a, b) => b.timestamp - a.timestamp);
   renderLogCounts();
 }
 
@@ -440,6 +455,8 @@ function renderLogTypes() {
   list('#sell-types', isSellLogTitle, isDefaultSellLog, saved?.selectedSells?.length ? saved.selectedSells : null, 'No sale log types found.');
   const uses = saved?.usesVersion === USES_VERSION && saved.selectedUses?.length ? saved.selectedUses : null;
   list('#use-types', isUseLogTitle, isDefaultUseLog, uses, 'No item use log types found.');
+  // Unticking every trade type is a real choice, so only settings from before this list get the defaults.
+  list('#trade-log-types', isTradeLogTitle, isDefaultTradeLog, Array.isArray(saved?.selectedTrades) ? saved.selectedTrades : null, 'No trade log types found.');
   renderLogCounts();
 }
 
@@ -893,7 +910,7 @@ $('#inv-update').addEventListener('click', () => {
 });
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
 document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
-for (const sel of ['#find-types', '#sell-types', '#use-types']) $(sel).addEventListener('change', () => settings.save());
+for (const sel of ['#find-types', '#sell-types', '#use-types', '#trade-log-types']) $(sel).addEventListener('change', () => settings.save());
 $('#older-logs').addEventListener('click', readOlderLogs);
 $('#export-btn').addEventListener('click', exportBackup);
 $('#import-file').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
