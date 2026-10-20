@@ -170,12 +170,16 @@ export async function savedLogs(db, player, typeIds) {
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
-/** Oldest log date saved for the given types, and whether every type's history is complete. */
+/**
+ * Oldest log date saved for the given types, whether every type's history is complete, and when
+ * the least recently synced type was last brought up to date.
+ */
 export async function historyCoverage(db, player, typeIds) {
   const states = Object.values(await syncStates(db, player, typeIds));
   const present = states.filter(Boolean);
   return {
     oldest: present.length ? Math.min(...present.map((s) => s.oldest)) : null,
+    newest: present.length ? Math.min(...present.map((s) => s.newest)) : null,
     complete: present.length > 0 && present.length === typeIds.length && present.every((s) => s.complete),
   };
 }

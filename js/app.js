@@ -53,6 +53,8 @@ const state = {
   expanded: new Set(),
   sort: store.get('sort', { key: 'profit', dir: 'desc' }),
   inventoryAt: null,
+  live: false,              // inventory loaded from Torn this session (not just shown from saved data)
+  savedAt: {},              // page -> when the saved data shown on it is from, until a live load replaces it
   rejectedKeys: new Set(),  // keys Torn said are invalid/disabled; never re-sent this session
 };
 
@@ -215,6 +217,7 @@ async function load({ force = settings.read().bypassCache } = {}) {
     $('#tos').open = false;
     $('#results').hidden = false;
     $('#bypass-cache').checked = false;
+    state.live = true;
     settings.save();
 
     if (s.priceSource === 'lowest') await refreshLowest();
@@ -241,32 +244,51 @@ function ago(t) {
 }
 
 /**
- * Show what's saved in this browser for the last player who loaded, without a key or any API
- * calls. Update (or Load) then brings it up to date.
+ * Fill every page from what's saved in this browser for the last player who loaded, without a
+ * key or any API calls. Returns { page: when that page's data is from } for the pages it filled.
  */
-async function restoreSaved() {
+async function hydrate() {
   const last = store.get('player', null);
-  if (!last || state.client) return;
+  if (!last) return {};
   await dbReady;
   const [catalog, logTypes, inv] = await Promise.all([
     meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
   ]);
-  if (!catalog || !inv || state.client) return; // nothing to show yet, or a load started meanwhile
+  if (!catalog || state.live) return {}; // nothing to show yet, or a load finished meanwhile
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
-  state.inventoryAt = inv.at;
   state.pricesAt = catalog.at;
-  state.holdings = aggregate(inv.value.items);
   state.snapshots = await savedSnapshots(state.db, last.id);
-  const s = settings.read();
-  state.findTypeIds = new Set(s.selectedFinds);
-  applyLogs(await savedLogs(state.db, last.id, ledgerLogIds(s)));
-  $('#tos').open = false;
-  $('#results').hidden = false;
+  const at = {};
+  if (inv) {
+    state.inventoryAt = inv.at;
+    state.holdings = aggregate(inv.value.items);
+    const s = settings.read();
+    state.findTypeIds = new Set(s.selectedFinds);
+    const logs = await savedLogs(state.db, last.id, ledgerLogIds(s));
+    if (!state.live) {
+      applyLogs(logs);
+      $('#tos').open = false;
+      $('#results').hidden = false;
+      render();
+      at.inventory = inv.at;
+    }
+  }
   await renderSavedSummary();
-  render();
-  if (currentPage() === 'inventory') status(`Showing ${last.name}'s saved data. Press Update to get the latest from Torn.`);
+  // The other pages read the Settings log types, so they go after renderLogTypes above.
+  const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
+  const [en, tr] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx)]);
+  if (en) at.energy = en;
+  if (tr) at.training = tr;
+  return at;
+}
+
+/** Say when the current page's data is from, if it's showing saved data rather than a live load. */
+function savedStatus() {
+  const t = state.savedAt[currentPage()];
+  if (!t || live[currentPage()]()) return;
+  status(`Showing ${state.player.name}'s saved data from ${ago(t)}. ${state.client ? 'Getting the latest from Torn…' : 'Add your API key to get the latest from Torn.'}`);
 }
 
 /** Combine inventory rows of the same item (stacks, uid'd weapons, etc.). */
@@ -626,9 +648,11 @@ const training = createTrainingPage({
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training'];
-const loaded = { inventory: () => !$('#results').hidden, energy: () => energy.loaded, training: () => training.loaded };
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load() };
+const PAGES = ['inventory', 'energy', 'training', 'settings'];
+// Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, settings: () => true };
+// Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -639,9 +663,10 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
-  if (state.client && !loaded[page]()) loaders[page]();
+  savedStatus();
+  if (state.client && !live[page]()) loaders[page]();
 }
 window.addEventListener('hashchange', showPage);
 
@@ -816,6 +841,28 @@ async function importBackup(file) {
 }
 
 
+// ---------- key dialog ----------
+function askForKey() {
+  const dlg = $('#key-dialog');
+  if (dlg.open) return;
+  $('#key-dialog-saved').hidden = !Object.keys(state.savedAt).length;
+  $('#dialog-key').value = '';
+  dlg.showModal();
+}
+$('#dialog-key-link').href = $('#custom-key-link').href;
+$('#key-dialog-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  $('#api-key').value = $('#dialog-key').value.trim();
+  $('#remember-key').checked = $('#dialog-remember').checked;
+  $('#key-dialog').close();
+  if (connect()) loaders[currentPage()]();
+});
+$('#dialog-later').addEventListener('click', () => $('#key-dialog').close());
+$('#dialog-tos').addEventListener('click', () => $('#key-dialog').close());
+$('#key-dialog').addEventListener('close', () => {
+  if (!state.client && !Object.keys(state.savedAt).length) status('Add your API key on the Settings tab whenever you\'re ready.');
+});
+
 // ---------- events ----------
 $('#key-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -903,8 +950,8 @@ $('#price-source').addEventListener('change', async () => {
 $('#refresh-prices').addEventListener('click', refreshLowest);
 $('#inv-update').addEventListener('click', () => {
   if (!state.client && !connect()) {
-    if (!$('#api-key').value.trim()) status('Enter your API key above to get the latest from Torn.', true);
-    return $('#api-key').focus();
+    if (!$('#api-key').value.trim()) askForKey();
+    return;
   }
   load({ force: true });
 });
@@ -921,6 +968,8 @@ $('#forget-btn').addEventListener('click', async () => {
   try { Object.keys(localStorage).filter((k) => k.startsWith('tip.')).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   state.client = null;
   state.key = null;
+  state.live = false;
+  state.savedAt = {};
   state.lowest = {};
   state.overrides = {};
   state.itemGroups = {};
@@ -948,4 +997,14 @@ if (savedKey) {
   $('#remember-key').checked = true;
 }
 showPage();
-restoreSaved().catch((err) => console.warn('Couldn\'t show saved data:', err));
+// Show the last known state straight away (it's all local), then bring it up to date if there's a key.
+hydrate()
+  .catch((err) => { console.warn('Couldn\'t show saved data:', err); return {}; })
+  .then((at) => {
+    state.savedAt = at;
+    if (state.client) return; // a key was entered while the saved data was being read
+    const connected = savedKey && connect();
+    savedStatus();
+    if (connected) loaders[currentPage()]();
+    else askForKey();
+  });

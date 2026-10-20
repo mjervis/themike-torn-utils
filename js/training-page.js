@@ -1,5 +1,6 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
-import { syncLogs, backfillOlder, historyCoverage, loadGyms } from './sync.js';
+import { syncLogs, backfillOlder, historyCoverage, loadGyms, savedLogs } from './sync.js';
+import { meta } from './db.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
   weeklyTraining, trainingTotals,
@@ -34,7 +35,7 @@ export function createTrainingPage(ctx) {
   // ---------- loading ----------
   async function load() {
     const client = ctx.client();
-    if (!client) return status('Enter your API key and press Load to see what your training costs.');
+    if (!client) return status('Add your API key on the Settings tab to see what your training costs.');
     const btns = [$('#tr-refresh'), $('#tr-older')];
     btns.forEach((b) => { b.disabled = true; });
     try {
@@ -45,7 +46,7 @@ export function createTrainingPage(ctx) {
       const catalog = await ctx.catalog();
       const logTypes = await ctx.logTypes();
       if (!ctx.hasUseTypes()) {
-        status('No item use log types are ticked — pick them under Inventory profit → Settings → Item use log types.', true);
+        status('No item use log types are ticked — pick them under Settings → Item use log types.', true);
         return;
       }
       if (!data.gymCost) {
@@ -67,7 +68,7 @@ export function createTrainingPage(ctx) {
         ({ logs } = await syncLogs(db, client, player, ids, { maxPages: ctx.logPages() }));
       }
 
-      Object.assign(data, { loaded: true, now: Math.floor(Date.now() / 1000), db, player, catalog, ids, gymIds: new Set(gymIds), logs });
+      Object.assign(data, { loaded: true, live: true, now: Math.floor(Date.now() / 1000), db, player, catalog, ids, gymIds: new Set(gymIds), logs });
       await renderCoverage();
       $('#tos').open = false;
       $('#tr-results').hidden = false;
@@ -80,9 +81,27 @@ export function createTrainingPage(ctx) {
     }
   }
 
+  /**
+   * Show what's saved in this browser, without a key or any API calls, as of the last sync.
+   * Returns when that was, or null if there's nothing saved to show.
+   */
+  async function restoreSaved({ db, player, catalog, logTypes }) {
+    if (data.loaded || !ctx.hasUseTypes()) return null;
+    const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
+    const ids = [...ctx.ledgerLogIds(), ...gymIds];
+    const [logs, cov, gyms] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms')]);
+    if (!logs.length || cov.newest == null || data.loaded) return null; // nothing saved, or a load started meanwhile
+    data.gymCost ??= Object.fromEntries((gyms?.value ?? []).map((g) => [g.id, g.energy_cost]));
+    Object.assign(data, { loaded: true, now: cov.newest, db, player, catalog, ids, gymIds: new Set(gymIds), logs, coverage: cov });
+    $('#tr-older').hidden = cov.complete;
+    $('#tr-results').hidden = false;
+    render();
+    return cov.newest;
+  }
+
   async function readOlder() {
     const client = ctx.client();
-    if (!client || !data.loaded) return load();
+    if (!client || !data.live) return load();
     $('#tr-older').disabled = true;
     try {
       const before = client.calls;
@@ -220,5 +239,5 @@ export function createTrainingPage(ctx) {
       || '<tr><td colspan="6" class="muted">Nothing in this range.</td></tr>';
   }
 
-  return { load, render, get loaded() { return data.loaded; } };
+  return { load, restoreSaved, render, get live() { return !!data.live; } };
 }

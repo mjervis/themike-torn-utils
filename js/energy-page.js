@@ -2,7 +2,8 @@ import {
   DEFAULTS, WEEK_STATS, weekWindow, isGymLogTitle, gymSessions, dailyTotals,
   statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY,
 } from './energy.js';
-import { syncLogs, loadGyms, loadInventoryCategories } from './sync.js';
+import { syncLogs, loadGyms, loadInventoryCategories, savedLogs } from './sync.js';
+import { meta } from './db.js';
 
 const ENERGY_CATEGORIES = ['Drug', 'Energy Drink', 'Booster'];
 const ENERGY_TYPES = new Set(ENERGY_CATEGORIES);
@@ -55,7 +56,7 @@ export function createEnergyPage(ctx) {
   // ---------- loading ----------
   async function load() {
     const client = ctx.client();
-    if (!client) return status('Enter your API key and press Load to see your energy.');
+    if (!client) return status('Add your API key on the Settings tab to see your energy.');
     const btn = $('#en-refresh');
     btn.disabled = true;
     try {
@@ -101,9 +102,13 @@ export function createEnergyPage(ctx) {
       for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
 
       Object.assign(data, {
-        loaded: true, now, week, bars, cooldowns, refills, gym, logs, catalog, owned,
+        loaded: true, live: true, now, week, bars, cooldowns, refills, gym, logs, catalog, owned,
         sessions: gymSessions(logs, data.gymCost),
         deltas: statDeltas(statsStart, statsNow),
+      });
+      // Kept so the next visit can show this straight away, before anything is fetched.
+      await meta.set(db, `cache:energy:${player}`, {
+        at: now, value: { week, bars, cooldowns, refills, gym, owned: [...owned], deltas: data.deltas, gymCost: data.gymCost },
       });
       $('#tos').open = false;
       $('#en-results').hidden = false;
@@ -114,6 +119,28 @@ export function createEnergyPage(ctx) {
     } finally {
       btn.disabled = false;
     }
+  }
+
+  /**
+   * Show the energy picture saved by the last load, without a key or any API calls.
+   * Returns when it was saved, or null if there's nothing to show.
+   */
+  async function restoreSaved({ db, player, catalog, logTypes }) {
+    if (data.loaded) return null;
+    const saved = await meta.get(db, `cache:energy:${player}`);
+    if (!saved) return null;
+    const v = saved.value;
+    const gymLogIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
+    const logs = (await savedLogs(db, player, gymLogIds)).filter((l) => l.timestamp >= v.week.start);
+    if (data.loaded) return null; // a load finished meanwhile
+    Object.assign(data, {
+      loaded: true, now: saved.at, week: v.week, bars: v.bars, cooldowns: v.cooldowns, refills: v.refills, gym: v.gym,
+      logs, catalog, owned: new Map(v.owned), deltas: v.deltas, gymCost: data.gymCost ?? v.gymCost,
+      sessions: gymSessions(logs, data.gymCost ?? v.gymCost),
+    });
+    $('#en-results').hidden = false;
+    render();
+    return saved.at;
   }
 
   // ---------- rendering ----------
@@ -241,5 +268,5 @@ export function createEnergyPage(ctx) {
       </tbody></table>`;
   }
 
-  return { load, render, get loaded() { return data.loaded; } };
+  return { load, restoreSaved, render, get live() { return !!data.live; } };
 }
