@@ -296,6 +296,13 @@
               <option value="in7">Inactive 7+ days</option>
               <option value="in30">Inactive 30+ days</option>
             </select></label>
+          <label class="check">Sort by
+            <select id="tg-sort">
+              <option value="status">Ready first</option>
+              <option value="mugged">Most mugged</option>
+              <option value="lastWin">Most recent win</option>
+              <option value="level">Level</option>
+            </select></label>
           <label class="check">Check up to <input id="tg-check-limit" type="number" min="1" max="100" value="20" class="short"> at a time</label>
         </div>
       </div>
@@ -312,14 +319,15 @@
         <div class="cards" id="tg-cards"></div>
         <div class="table-wrap">
           <table id="tg-table">
-            <thead><tr><th>Player</th><th class="num">Level</th><th>Status</th><th>Location</th><th>Last active</th><th class="num">Life</th><th class="num">Wins</th><th>Last win (TCT)</th><th class="num">FF</th><th></th></tr></thead>
+            <thead><tr><th>Player</th><th class="num">Level</th><th>Status</th><th>Location</th><th>Last active</th><th class="num">Life</th><th class="num">Wins</th><th class="num">Mugged</th><th>Last win (TCT)</th><th class="num">FF</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
         <p class="footnote">Targets are everyone you've beaten (attacked, mugged, hospitalised, looted, arrested or claimed a bounty on), from your own attack history.
           Each status check is one API call per player, spaced a second apart; “Check statuses” looks up the most recently beaten targets in the current level and date filters whose status is over a minute old.
           Hospital and jail timers count down from the last check; once one runs out the target shows as Ready, but they may have been hit again since — check again before attacking.
-          Last active and Ready only filter targets that have been checked. FF is the fair fight bonus from your last win.</p>
+          Last active and Ready only filter targets that have been checked. FF is the fair fight bonus from your last win.
+          Mugged money comes from your mug logs (Settings → Mug log types) and is counted for mugs in the “Beaten in” range; a mug log that doesn't name the player is matched to your Mugged attack that ended at the same time.</p>
       </section>
     </div>
 
@@ -433,6 +441,11 @@
           <legend>Item use log types</legend>
           <p class="hint">Items you use (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…) come out of stock here and are costed on the Training cost page.</p>
           <div id="use-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Mug log types</legend>
+          <p class="hint">Mugs you made, read by the Targets page for how much you've mugged each player. Don't tick types for being mugged yourself.</p>
+          <div id="mug-types" class="log-types"><em>Load once to see available log types.</em></div>
         </fieldset>
         <fieldset>
           <legend>Your saved data</legend>

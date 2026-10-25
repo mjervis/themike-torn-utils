@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
 import { createClient } from '../js/api.js';
-import { syncAttacks, beatenTargets, targetStatus, compareTargets, trimAttack } from '../js/targets.js';
+import {
+  syncAttacks, beatenTargets, targetStatus, compareTargets, trimAttack, isMugLogTitle, parseMug, mugTotals,
+} from '../js/targets.js';
 
 const ME = 1;
 const attack = (id, started, defender, result, extra = {}) => ({
@@ -33,6 +35,7 @@ test('beatenTargets groups wins per defender and ignores incoming and assists', 
   assert.equal(r.lastWin, 300);
   assert.equal(r.lastResult, 'Mugged');
   assert.equal(r.ff, 3);
+  assert.equal(r.mugs, 1);
 });
 
 test('targetStatus reads hospital, travel and abroad descriptions', () => {
@@ -115,4 +118,44 @@ test('client.attacks asks for outgoing attacks and pages back by start time', { 
   assert.equal(urls[1].searchParams.get('to'), '901');
   assert.equal(attacks.length, 129); // 100 + 30, one shared at the page boundary
   assert.equal(attacks[0].started, 1000);
+});
+
+test('isMugLogTitle picks mugs you made, not ones made on you', () => {
+  assert.equal(isMugLogTitle('Attack mug'), true);
+  assert.equal(isMugLogTitle('Attack mugged'), true);
+  assert.equal(isMugLogTitle('Attack mug receive'), false);
+  assert.equal(isMugLogTitle('Attack mugged by'), false);
+  assert.equal(isMugLogTitle('Attack hospitalize'), false);
+  assert.equal(isMugLogTitle('Smuggling'), false);
+});
+
+test('parseMug reads money and victim from several field names', () => {
+  assert.deepEqual(parseMug({ id: 'a', timestamp: 5, data: { money_mugged: 12345, defender: 7 } }), { id: 'a', timestamp: 5, amount: 12345, victim: 7 });
+  assert.deepEqual(parseMug({ id: 'b', timestamp: 6, data: { money: '$1,000', target: { id: 8 } } }), { id: 'b', timestamp: 6, amount: 1000, victim: 8 });
+  assert.deepEqual(parseMug({ id: 'c', timestamp: 7, data: {} }), { id: 'c', timestamp: 7, amount: null, victim: null });
+});
+
+test('mugTotals adds up per target, matching logs with no victim to the attack by time', () => {
+  const attacks = [
+    attack(1, 1000, 7, 'Mugged'), // ends 1030
+    attack(2, 5000, 8, 'Mugged'), // ends 5030
+    attack(3, 9000, 9, 'Hospitalized'),
+  ].map(trimAttack);
+  const logs = [
+    { id: 'l1', timestamp: 1031, data: { money_mugged: 500 } },          // matched to attack 1 → 7
+    { id: 'l2', timestamp: 5032, data: { money_mugged: 2000 } },         // matched to attack 2 → 8
+    { id: 'l3', timestamp: 6000, data: { money_mugged: 300, defender: 7 } }, // says who
+    { id: 'l4', timestamp: 9001, data: { money_mugged: 50 } },           // no Mugged attack near it
+    { id: 'l5', timestamp: 9500, data: {} },                             // no amount: ignored
+  ];
+  const all = mugTotals(logs, attacks, ME);
+  assert.equal(all.total, 2850);
+  assert.equal(all.count, 4);
+  assert.equal(all.unmatched, 1);
+  assert.deepEqual(all.byTarget.get(7), { mugs: 2, money: 800, biggest: 500, lastMug: 6000 });
+  assert.deepEqual(all.byTarget.get(8), { mugs: 1, money: 2000, biggest: 2000, lastMug: 5032 });
+
+  const recent = mugTotals(logs, attacks, ME, 5000);
+  assert.equal(recent.total, 2350);
+  assert.equal(recent.byTarget.get(7).money, 300);
 });

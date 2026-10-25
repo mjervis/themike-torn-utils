@@ -15,6 +15,7 @@ import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
 import { createTargetsPage } from './targets-page.js';
+import { isMugLogTitle } from './targets.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
   buildLedger, parseTrades, tradeSummary, realisedByDay,
@@ -78,6 +79,7 @@ const settings = {
       selectedSells: [...document.querySelectorAll('#sell-types input:checked')].map((i) => Number(i.value)),
       selectedUses: [...document.querySelectorAll('#use-types input:checked')].map((i) => Number(i.value)),
       selectedTrades: [...document.querySelectorAll('#trade-log-types input:checked')].map((i) => Number(i.value)),
+      selectedMugs: [...document.querySelectorAll('#mug-types input:checked')].map((i) => Number(i.value)),
       range: document.querySelector('input[name=range]:checked').value,
     };
   },
@@ -258,6 +260,7 @@ async function hydrate() {
     meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
   ]);
   if (state.live) return {}; // a load finished meanwhile
+  if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   if (!catalog) {
     // Only the Targets page has been used: it doesn't need the item catalogue.
     const tg = await targets.restoreSaved({ db: state.db, player: last.id });
@@ -266,7 +269,6 @@ async function hydrate() {
   }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
-  if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   state.pricesAt = catalog.at;
   state.snapshots = await savedSnapshots(state.db, last.id);
   const at = {};
@@ -489,6 +491,7 @@ function renderLogTypes() {
   list('#use-types', isUseLogTitle, isDefaultUseLog, uses, 'No item use log types found.');
   // Unticking every trade type is a real choice, so only settings from before this list get the defaults.
   list('#trade-log-types', isTradeLogTitle, isDefaultTradeLog, Array.isArray(saved?.selectedTrades) ? saved.selectedTrades : null, 'No trade log types found.');
+  list('#mug-types', isMugLogTitle, isMugLogTitle, Array.isArray(saved?.selectedMugs) ? saved.selectedMugs : null, 'No mug log types found.');
   renderLogCounts();
 }
 
@@ -496,7 +499,8 @@ function renderLogTypes() {
 function renderLogCounts() {
   const counts = new Map();
   for (const l of state.rawLogs.values()) counts.set(l.details?.id, (counts.get(l.details?.id) ?? 0) + 1);
-  document.querySelectorAll('.log-count').forEach((el) => {
+  // Mug logs are read by the Targets page, not kept with the inventory logs counted here.
+  document.querySelectorAll('.log-count:not(#mug-types .log-count)').forEach((el) => {
     const input = el.closest('label').querySelector('input');
     const n = counts.get(Number(el.dataset.logType)) ?? 0;
     el.textContent = input.checked && state.player ? `· ${n.toLocaleString('en-GB')} saved` : '';
@@ -660,10 +664,13 @@ const training = createTrainingPage({
   onError: reportError,
 });
 const targets = createTargetsPage({
-  $, store, status, esc, num: money0,
+  $, store, status, esc, money, num: money0,
   client: () => state.client,
   db: async () => (await dbReady, state.db),
   player: currentPlayer,
+  logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
+  // Read after logTypes(), which renders the Settings checkboxes these come from.
+  mugLogIds: () => settings.read().selectedMugs,
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
@@ -990,7 +997,7 @@ $('#inv-update').addEventListener('click', () => {
 });
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
 document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
-for (const sel of ['#find-types', '#sell-types', '#use-types', '#trade-log-types']) $(sel).addEventListener('change', () => settings.save());
+for (const sel of ['#find-types', '#sell-types', '#use-types', '#trade-log-types', '#mug-types']) $(sel).addEventListener('change', () => settings.save());
 $('#older-logs').addEventListener('click', readOlderLogs);
 $('#export-btn').addEventListener('click', exportBackup);
 $('#import-file').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
