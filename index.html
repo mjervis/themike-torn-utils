@@ -16,6 +16,7 @@
       <a href="#energy" data-page="energy">Energy</a>
       <a href="#training" data-page="training">Training cost</a>
       <a href="#targets" data-page="targets">Targets</a>
+      <a href="#chain" data-page="chain">Chain</a>
       <a href="#settings" data-page="settings">Settings</a>
     </nav>
   </header>
@@ -331,6 +332,52 @@
       </section>
     </div>
 
+    <div id="page-chain" class="page" hidden>
+      <section id="ch-results" hidden>
+        <div class="ch-banner" id="ch-banner"></div>
+        <div class="toolbar">
+          <span class="muted" id="ch-asof"></span>
+          <span>
+            <label class="check"><input id="ch-auto" type="checkbox" checked> Refresh every minute</label>
+            <button id="ch-refresh" type="button">Refresh</button>
+          </span>
+        </div>
+        <div class="cards" id="ch-cards"></div>
+
+        <h2 class="section-title">Team standings</h2>
+        <div class="table-wrap">
+          <table id="ch-standings">
+            <thead><tr><th class="num">Place</th><th>Team</th><th class="num">Members</th><th class="num">Hits</th><th class="num">Score</th><th class="num">Qualified</th><th class="num">Prize each</th><th class="num">Team payout</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="ch-teams" id="ch-teams"></div>
+
+        <h2 class="section-title">Individual prizes</h2>
+        <div class="cards" id="ch-prizes"></div>
+        <div id="ch-others"></div>
+
+        <details id="ch-setup" class="panel settings">
+          <summary>Teams</summary>
+          <p class="hint">Team members are matched to the faction by name. Anyone the announcement names differently from Torn can be put on their team here; changes are kept on this device only.</p>
+          <p id="ch-setup-note" class="hint"></p>
+          <div class="table-wrap">
+            <table id="ch-setup-table" class="mini">
+              <thead><tr><th>Member</th><th>Position</th><th>Team</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <button id="ch-reset-teams" type="button" class="secondary">Reset to the announced teams</button>
+        </details>
+
+        <p class="footnote">Scores come from Torn's chain reports for chains running since the start: a hit is any chain attack that left, mugged or hospitalised the target (assists, losses, escapes and stalemates don't count).
+          Team score = team hits ÷ team members; teams level on score share a place. Members need 30+ hits for their team payout.
+          Soul Collector respect leaves out bonus hits (10, 25, 50, 100…). Prizes halve if a chain ends before reaching 2,500.
+          Raffles and the Pumpkin King / Queen vote are drawn by leadership; this page only shows who's eligible.
+          The chain and its report are re-read every minute while this page is open (2 API calls).</p>
+      </section>
+    </div>
+
     <div id="page-settings" class="page" hidden>
       <section class="panel key-panel">
         <h2>Torn API key</h2>
@@ -365,17 +412,17 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Only locally, in your browser — your log history, attack history, daily snapshots, cached inventory &amp; prices, target statuses, settings and manual costs. Persistent until you clear it with the button below.</td>
+                  <td>Only locally, in your browser — your log history, attack history, daily snapshots, cached inventory &amp; prices, target statuses, your faction's member list and chain reports, settings and manual costs. Persistent until you clear it with the button below.</td>
                   <td>Nobody</td>
-                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, and where players you've beaten are now.</td>
+                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, where players you've beaten are now, and your faction's chain competition standings.</td>
                   <td>Stored locally only if you tick “Remember” / Not shared</td>
-                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
+                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>faction</code> → members, chain, chains, chainreport; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p><strong>Recommended:</strong>
-            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;faction=members,chain,chains,chainreport&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
             with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
             You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
         </details>

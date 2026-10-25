@@ -15,6 +15,7 @@ import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
 import { createTargetsPage } from './targets-page.js';
+import { createChainPage } from './chain-page.js';
 import { isMugLogTitle } from './targets.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
@@ -262,10 +263,10 @@ async function hydrate() {
   if (state.live) return {}; // a load finished meanwhile
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   if (!catalog) {
-    // Only the Targets page has been used: it doesn't need the item catalogue.
-    const tg = await targets.restoreSaved({ db: state.db, player: last.id });
-    if (tg) state.player ??= last;
-    return tg ? { targets: tg } : {};
+    // Only the Targets or Chain page has been used: they don't need the item catalogue.
+    const [tg, ch] = await Promise.all([targets.restoreSaved({ db: state.db, player: last.id }), chain.restoreSaved({ db: state.db, player: last.id })]);
+    if (tg || ch) state.player ??= last;
+    return { ...(tg ? { targets: tg } : {}), ...(ch ? { chain: ch } : {}) };
   }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
@@ -289,10 +290,11 @@ async function hydrate() {
   await renderSavedSummary();
   // The other pages read the Settings log types, so they go after renderLogTypes above.
   const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
-  const [en, tr, tg] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx)]);
+  const [en, tr, tg, ch] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx), chain.restoreSaved(ctx)]);
   if (en) at.energy = en;
   if (tr) at.training = tr;
   if (tg) at.targets = tg;
+  if (ch) at.chain = ch;
   return at;
 }
 
@@ -674,11 +676,18 @@ const targets = createTargetsPage({
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training', 'targets', 'settings'];
+const chain = createChainPage({
+  $, store, status, esc, money, num: money0,
+  client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: currentPlayer,
+  onError: reportError,
+});
+const PAGES = ['inventory', 'energy', 'training', 'targets', 'chain', 'settings'];
 // Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
-const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, settings: () => true };
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, chain: () => chain.live, settings: () => true };
 // Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), settings: load };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), chain: () => chain.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -689,7 +698,7 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', settings: 'Settings' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', chain: 'Chain', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
   savedStatus();
   if (state.client && !live[page]()) loaders[page]();

@@ -173,6 +173,26 @@ export function createClient(key) {
       return (await get(`/user/${id}/profile`)).profile;
     },
 
+    /** Your faction's members: id, name, position, level, last action, status. */
+    async factionMembers() {
+      return (await get('/faction/members')).members ?? [];
+    },
+
+    /** Your faction's current chain: { id, current, max, timeout (secs left), cooldown, start, end }. */
+    async chain() {
+      return (await get('/faction/chain')).chain;
+    },
+
+    /** Your faction's finished chains from `from` (unix seconds) on, oldest first. */
+    async chains({ from } = {}) {
+      return (await get('/faction/chains', { from, sort: 'ASC', limit: 100 })).chains ?? [];
+    },
+
+    /** A chain report with per-member hits and respect: the latest (including an ongoing chain), or chain `id`. */
+    async chainReport(id) {
+      return (await get(id ? `/faction/${id}/chainreport` : '/faction/chainreport')).chainreport;
+    },
+
     /** Energy, nerve, happy and life bars. */
     async bars() {
       return (await get('/user/bars')).bars;
