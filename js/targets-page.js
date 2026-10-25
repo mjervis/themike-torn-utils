@@ -1,21 +1,24 @@
 import {
-  syncAttacks, savedAttacks, beatenTargets, targetStatus, compareTargets, trimProfile, savedStatuses, saveStatuses,
+  syncAttacks, savedAttacks, beatenTargets, targetStatus, compareTargets, trimProfile, savedStatuses, saveStatuses, mugTotals,
 } from './targets.js';
+import { syncLogs, savedLogs, backfillOlder } from './sync.js';
 
 // A status checked this recently isn't asked for again by "Check statuses".
 const FRESH_SECS = 60;
 
 /**
- * The Targets page: players you've beaten, from your attack history, with where they are now.
- * @param {{ $, store, status, esc, num, client: () => object|null, db: () => Promise<object>,
- *   player: () => Promise<{ id: number }>, logPages: () => number, onError: (err) => void }} ctx
+ * The Targets page: players you've beaten, from your attack history, with where they are now
+ * and how much you've mugged them for.
+ * @param {{ $, store, status, esc, money, num, client: () => object|null, db: () => Promise<object>,
+ *   player: () => Promise<{ id: number }>, logTypes: () => Promise<object[]>, mugLogIds: () => number[],
+ *   logPages: () => number, onError: (err) => void }} ctx
  */
 export function createTargetsPage(ctx) {
-  const { $, store, status, esc, num } = ctx;
-  const data = { loaded: false, statuses: {}, checking: false };
+  const { $, store, status, esc, money, num } = ctx;
+  const data = { loaded: false, statuses: {}, checking: false, mugLogs: [] };
 
   // ---------- settings ----------
-  const DEFAULTS = { show: 'all', range: 'all', minLevel: '', maxLevel: '', active: 'any', checkLimit: 20 };
+  const DEFAULTS = { show: 'all', range: 'all', minLevel: '', maxLevel: '', active: 'any', sort: 'status', checkLimit: 20 };
   const saved = { ...DEFAULTS, ...store.get('targets', {}) };
   for (const [name, value] of [['tg-show', saved.show], ['tg-range', saved.range]]) {
     const el = document.querySelector(`input[name=${name}][value="${value}"]`);
@@ -24,6 +27,7 @@ export function createTargetsPage(ctx) {
   $('#tg-min-level').value = saved.minLevel;
   $('#tg-max-level').value = saved.maxLevel;
   $('#tg-active').value = saved.active;
+  $('#tg-sort').value = saved.sort;
   $('#tg-check-limit').value = saved.checkLimit;
   const read = () => ({
     show: document.querySelector('input[name=tg-show]:checked').value,
@@ -31,11 +35,12 @@ export function createTargetsPage(ctx) {
     minLevel: $('#tg-min-level').value,
     maxLevel: $('#tg-max-level').value,
     active: $('#tg-active').value,
+    sort: $('#tg-sort').value,
     checkLimit: Math.min(100, Math.max(1, Number($('#tg-check-limit').value) || DEFAULTS.checkLimit)),
   });
   const save = () => { store.set('targets', read()); render(); };
   document.querySelectorAll('input[name=tg-show], input[name=tg-range]').forEach((el) => el.addEventListener('change', save));
-  for (const sel of ['#tg-min-level', '#tg-max-level', '#tg-active', '#tg-check-limit']) $(sel).addEventListener('input', save);
+  for (const sel of ['#tg-min-level', '#tg-max-level', '#tg-active', '#tg-sort', '#tg-check-limit']) $(sel).addEventListener('input', save);
   $('#tg-refresh').addEventListener('click', () => load());
   $('#tg-check').addEventListener('click', () => checkStatuses());
   $('#tg-older').addEventListener('click', () => readOlder());
@@ -62,8 +67,11 @@ export function createTargetsPage(ctx) {
       status('Checking your key…');
       const player = (await ctx.player()).id;
       const synced = await syncAttacks(db, client, player, { maxPages: ctx.logPages(), onProgress: status });
+      await ctx.logTypes();
+      const mugIds = ctx.mugLogIds();
+      const mugLogs = mugIds.length ? (await syncLogs(db, client, player, mugIds, { maxPages: ctx.logPages(), onProgress: status })).logs : [];
       const statuses = data.player === player ? data.statuses : await savedStatuses(db, player);
-      Object.assign(data, { loaded: true, live: true, db, player, statuses, ...pick(synced) });
+      Object.assign(data, { loaded: true, live: true, db, player, statuses, mugLogs, ...pick(synced) });
       $('#tg-results').hidden = false;
       render();
     } catch (err) {
@@ -80,9 +88,9 @@ export function createTargetsPage(ctx) {
   /** Show what's saved in this browser without a key or API calls. Returns when it's from, or null. */
   async function restoreSaved({ db, player }) {
     if (data.loaded) return null;
-    const [saved, statuses] = await Promise.all([savedAttacks(db, player), savedStatuses(db, player)]);
+    const [saved, statuses, mugLogs] = await Promise.all([savedAttacks(db, player), savedStatuses(db, player), savedLogs(db, player, ctx.mugLogIds())]);
     if (!saved?.attacks.length || data.loaded) return null;
-    Object.assign(data, { loaded: true, db, player, statuses, ...pick(saved) });
+    Object.assign(data, { loaded: true, db, player, statuses, mugLogs, ...pick(saved) });
     $('#tg-results').hidden = false;
     render();
     return saved.at;
@@ -95,6 +103,8 @@ export function createTargetsPage(ctx) {
     try {
       const before = client.calls;
       const synced = await syncAttacks(data.db, client, data.player, { maxPages: ctx.logPages(), older: true, onProgress: status });
+      const mugIds = ctx.mugLogIds();
+      if (mugIds.length) data.mugLogs = (await backfillOlder(data.db, client, data.player, mugIds, { maxPages: ctx.logPages(), onProgress: status })).logs;
       Object.assign(data, pick(synced));
       status(`Added ${synced.added} older attacks${synced.complete ? ' — that\'s your full history' : ''} (${client.calls - before} API calls).`);
       render();
@@ -162,19 +172,22 @@ export function createTargetsPage(ctx) {
   }
   const ago = (t, now) => (!t ? '—' : now - t < 60 ? 'just now' : `${span(now - t).replace(/ \d+s$/, '')} ago`);
 
-  /** Targets with their current status, filtered by the toolbar choices. */
-  function visibleRows({ ignoreStatusFilters = false } = {}) {
+  const rangeStart = (s, now) => (s.range === 'all' ? -Infinity : now - Number(s.range) * 86400);
+
+  /** Targets with their current status and mug money, filtered by the toolbar choices. */
+  function visibleRows({ ignoreStatusFilters = false, mugs } = {}) {
     const s = read();
     const now = Math.floor(Date.now() / 1000);
-    const from = s.range === 'all' ? -Infinity : now - Number(s.range) * 86400;
+    const from = rangeStart(s, now);
     const minLevel = s.minLevel === '' ? -Infinity : Number(s.minLevel);
     const maxLevel = s.maxLevel === '' ? Infinity : Number(s.maxLevel);
+    mugs ??= mugTotals(data.mugLogs, data.attacks, data.player, from);
     return beatenTargets(data.attacks, data.player)
       .map((r) => {
         const checked = data.statuses[r.id];
         const p = checked?.profile;
         return { ...r, level: p?.level ?? r.level, name: p?.name ?? r.name, checkedAt: checked?.at ?? null, profile: p ?? null,
-          where: p ? targetStatus(p.status, now) : null };
+          where: p ? targetStatus(p.status, now) : null, mugged: mugs.byTarget.get(r.id) ?? null };
       })
       .filter((r) => r.lastWin >= from && r.level >= minLevel && r.level <= maxLevel)
       .filter((r) => {
@@ -191,8 +204,10 @@ export function createTargetsPage(ctx) {
   function render() {
     if (!data.loaded) return;
     const now = Math.floor(Date.now() / 1000);
-    const all = visibleRows({ ignoreStatusFilters: true });
-    const rows = visibleRows().sort(compareTargets);
+    const s = read();
+    const mugs = mugTotals(data.mugLogs, data.attacks, data.player, rangeStart(s, now));
+    const all = visibleRows({ ignoreStatusFilters: true, mugs });
+    const rows = visibleRows({ mugs }).sort(SORTS[s.sort] ?? compareTargets);
     const checked = all.filter((r) => r.where);
     const count = (kind) => checked.filter((r) => (kind === 'ready' ? r.where.ready : !r.where.ready && r.where.kind === kind)).length;
 
@@ -206,11 +221,27 @@ export function createTargetsPage(ctx) {
       <div class="card"><div class="label">In hospital</div><div class="value">${n0(count('hospital'))}</div>
         <div class="sub">${n0(count('jail'))} in jail</div></div>
       <div class="card"><div class="label">Away</div><div class="value">${n0(count('abroad') + count('traveling'))}</div>
-        <div class="sub">${n0(count('abroad'))} abroad · ${n0(count('traveling'))} flying</div></div>`;
+        <div class="sub">${n0(count('abroad'))} abroad · ${n0(count('traveling'))} flying</div></div>
+      <div class="card"><div class="label">Mugged</div><div class="value">${money(mugs.total)}</div>
+        <div class="sub">${mugSub(mugs)}</div></div>`;
 
     $('#tg-table tbody').innerHTML = rows.map((r) => row(r, now)).join('')
-      || `<tr><td colspan="10" class="muted">${all.length ? 'No targets match these filters — statuses and last active only show once a target has been checked.' : 'No wins in your saved attacks yet.'}</td></tr>`;
+      || `<tr><td colspan="11" class="muted">${all.length ? 'No targets match these filters — statuses and last active only show once a target has been checked.' : 'No wins in your saved attacks yet.'}</td></tr>`;
   }
+
+  function mugSub(mugs) {
+    if (!ctx.mugLogIds().length) return 'pick mug log types in Settings';
+    if (!mugs.count) return 'no mugs in this range';
+    const biggest = Math.max(...[...mugs.byTarget.values()].map((t) => t.biggest), 0);
+    return `${n0(mugs.count)} mug${mugs.count === 1 ? '' : 's'}${biggest ? ` · biggest ${money(biggest)}` : ''}${mugs.unmatched ? ` · ${n0(mugs.unmatched)} not matched to a player` : ''}`;
+  }
+
+  const SORTS = {
+    status: compareTargets,
+    mugged: (a, b) => (b.mugged?.money ?? 0) - (a.mugged?.money ?? 0) || compareTargets(a, b),
+    lastWin: (a, b) => (b.lastWin ?? 0) - (a.lastWin ?? 0),
+    level: (a, b) => (b.level ?? 0) - (a.level ?? 0) || compareTargets(a, b),
+  };
 
   const KIND_TAG = { okay: 'found', hospital: 'warn', jail: 'warn', federal: 'warn', abroad: '', traveling: '', gone: '' };
 
@@ -237,6 +268,8 @@ export function createTargetsPage(ctx) {
       <td>${last ? `${esc(last.status)}<div class="muted small">${ago(last.timestamp, now)}</div>` : '—'}</td>
       <td class="num">${life ? `${n0(life.current)} / ${n0(life.maximum)}` : '—'}</td>
       <td class="num">${n0(r.wins)}${r.losses ? ` <span class="neg small">${n0(r.losses)} lost</span>` : ''}</td>
+      <td class="num">${r.mugged ? `${money(r.mugged.money)}<div class="muted small">${n0(r.mugged.mugs)} mug${r.mugged.mugs === 1 ? '' : 's'} · best ${money(r.mugged.biggest)}</div>`
+        : r.mugs ? `<span class="muted" title="Mugged in your attacks, but no mug log found for the money">${n0(r.mugs)} mug${r.mugs === 1 ? '' : 's'}</span>` : '—'}</td>
       <td>${tct(r.lastWin)}<div class="muted small">${esc(r.lastResult)}${r.respect ? ` · ${r.respect.toFixed(2)} respect` : ''}</div></td>
       <td class="num">${r.ff == null ? '—' : r.ff.toFixed(2)}</td>
       <td><a class="button" href="https://www.torn.com/loader.php?sid=attack&amp;user2ID=${r.id}" target="_blank" rel="noopener">Attack</a></td>

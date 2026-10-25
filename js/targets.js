@@ -74,7 +74,7 @@ export function beatenTargets(attacks, me) {
     const lost = LOSS_RESULTS.has(a.result);
     if (!won && !lost) continue;
     const d = a.defender;
-    const row = rows.get(d.id) ?? { id: d.id, wins: 0, losses: 0, lastWin: null };
+    const row = rows.get(d.id) ?? { id: d.id, wins: 0, losses: 0, mugs: 0, lastWin: null };
     // Oldest first, so the newest attack's name, level and faction win.
     Object.assign(row, { name: d.name, level: d.level, faction: d.faction });
     if (won) {
@@ -83,6 +83,7 @@ export function beatenTargets(attacks, me) {
       row.lastResult = a.result;
       row.ff = a.ff;
       row.respect = a.respect;
+      if (a.result === 'Mugged') row.mugs++;
     } else {
       row.losses++;
       row.lastLoss = a.started;
@@ -90,6 +91,73 @@ export function beatenTargets(attacks, me) {
     rows.set(d.id, row);
   }
   return [...rows.values()].filter((r) => r.wins > 0);
+}
+
+// ---------- mugs ----------
+// The attack history says who you mugged but not for how much; the money is in your mug logs.
+
+/** Log types for mugs you made, picked by title (not ones where you were mugged). */
+export function isMugLogTitle(title) {
+  return /\bmug(s|ged|ging)?\b/i.test(title) && !/\b(receive[ds]?|received|victim|by|defend\w*|lost|lose)\b/i.test(title);
+}
+
+const toNum = (v) => {
+  const n = typeof v === 'string' ? Number(v.replace(/[$,]/g, '')) : v;
+  return Number.isFinite(n) ? n : null;
+};
+const firstOf = (obj, keys) => {
+  for (const k of keys) {
+    const v = obj?.[k];
+    const n = toNum(v && typeof v === 'object' ? v.id : v);
+    if (n != null) return n;
+  }
+  return null;
+};
+
+/**
+ * Money and victim from one mug log. Torn doesn't document mug log data, so several field names
+ * are accepted; the victim may be missing, in which case it's matched to an attack by time.
+ */
+export function parseMug(log) {
+  const data = log.data ?? {};
+  const amount = firstOf(data, ['money_mugged', 'money', 'amount', 'cash', 'mugged', 'value']);
+  const victim = firstOf(data, ['defender', 'defender_id', 'target', 'target_id', 'victim', 'victim_id', 'user', 'user_id']);
+  return { id: log.id, timestamp: log.timestamp, amount, victim };
+}
+
+// A mug log is written as the attack ends; allow for the two clocks being a little apart.
+const MUG_MATCH_SECS = 120;
+
+/**
+ * Mug money per target: { byTarget: Map(id -> { mugs, money, biggest, lastMug }), total, count, unmatched }.
+ * Logs without a victim are matched to your nearest "Mugged" attack that ended within two minutes.
+ * Only mugs from `from` (unix seconds) on are counted.
+ */
+export function mugTotals(mugLogs, attacks, me, from = -Infinity) {
+  const mugAttacks = attacks.filter((a) => a.attacker?.id === me && a.result === 'Mugged');
+  const used = new Set();
+  const byTarget = new Map();
+  let total = 0; let count = 0; let unmatched = 0;
+  for (const m of mugLogs.map(parseMug).sort((a, b) => a.timestamp - b.timestamp)) {
+    if (m.amount == null || m.timestamp < from) continue;
+    let victim = m.victim;
+    if (victim == null) {
+      const best = mugAttacks
+        .filter((a) => !used.has(a.id) && Math.abs((a.ended ?? a.started) - m.timestamp) <= MUG_MATCH_SECS)
+        .sort((a, b) => Math.abs((a.ended ?? a.started) - m.timestamp) - Math.abs((b.ended ?? b.started) - m.timestamp))[0];
+      if (best) { used.add(best.id); victim = best.defender.id; }
+    }
+    total += m.amount;
+    count++;
+    if (victim == null) { unmatched++; continue; }
+    const t = byTarget.get(victim) ?? { mugs: 0, money: 0, biggest: 0, lastMug: null };
+    t.mugs++;
+    t.money += m.amount;
+    t.biggest = Math.max(t.biggest, m.amount);
+    t.lastMug = m.timestamp;
+    byTarget.set(victim, t);
+  }
+  return { byTarget, total, count, unmatched };
 }
 
 // Torn writes hospitals abroad as "In a Swiss hospital for 20 mins".
