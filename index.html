@@ -15,6 +15,7 @@
       <a href="#inventory" data-page="inventory">Inventory profit</a>
       <a href="#energy" data-page="energy">Energy</a>
       <a href="#training" data-page="training">Training cost</a>
+      <a href="#targets" data-page="targets">Targets</a>
       <a href="#settings" data-page="settings">Settings</a>
     </nav>
   </header>
@@ -267,6 +268,61 @@
           Weeks follow the start day set on the Energy page.</p>
       </section>
     </div>
+
+    <div id="page-targets" class="page" hidden>
+      <div class="toolbar">
+        <div class="routes" role="radiogroup" aria-label="Show">
+          <span>Show:</span>
+          <label><input type="radio" name="tg-show" value="all" checked> All</label>
+          <label><input type="radio" name="tg-show" value="ready"> Ready to hit</label>
+        </div>
+        <div class="routes" role="radiogroup" aria-label="Beaten within">
+          <span>Beaten in:</span>
+          <label><input type="radio" name="tg-range" value="7"> 7 days</label>
+          <label><input type="radio" name="tg-range" value="30"> 30 days</label>
+          <label><input type="radio" name="tg-range" value="90"> 90 days</label>
+          <label><input type="radio" name="tg-range" value="all" checked> All</label>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="filters">
+          <label class="check">Level <input id="tg-min-level" type="number" min="1" max="100" placeholder="min" class="short"> –
+            <input id="tg-max-level" type="number" min="1" max="100" placeholder="max" class="short"></label>
+          <label class="check">Last active
+            <select id="tg-active">
+              <option value="any">Any time</option>
+              <option value="1">Within a day</option>
+              <option value="7">Within a week</option>
+              <option value="in7">Inactive 7+ days</option>
+              <option value="in30">Inactive 30+ days</option>
+            </select></label>
+          <label class="check">Check up to <input id="tg-check-limit" type="number" min="1" max="100" value="20" class="short"> at a time</label>
+        </div>
+      </div>
+
+      <section id="tg-results" hidden>
+        <div class="toolbar">
+          <span class="muted" id="tg-asof"></span>
+          <span>
+            <button id="tg-older" type="button" class="secondary">Read older attacks</button>
+            <button id="tg-refresh" type="button" class="secondary">Refresh attacks</button>
+            <button id="tg-check" type="button">Check statuses</button>
+          </span>
+        </div>
+        <div class="cards" id="tg-cards"></div>
+        <div class="table-wrap">
+          <table id="tg-table">
+            <thead><tr><th>Player</th><th class="num">Level</th><th>Status</th><th>Location</th><th>Last active</th><th class="num">Life</th><th class="num">Wins</th><th>Last win (TCT)</th><th class="num">FF</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="footnote">Targets are everyone you've beaten (attacked, mugged, hospitalised, looted, arrested or claimed a bounty on), from your own attack history.
+          Each status check is one API call per player, spaced a second apart; “Check statuses” looks up the most recently beaten targets in the current level and date filters whose status is over a minute old.
+          Hospital and jail timers count down from the last check; once one runs out the target shows as Ready, but they may have been hit again since — check again before attacking.
+          Last active and Ready only filter targets that have been checked. FF is the fair fight bonus from your last win.</p>
+      </section>
+    </div>
+
     <div id="page-settings" class="page" hidden>
       <section class="panel key-panel">
         <h2>Torn API key</h2>
@@ -301,17 +357,17 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Only locally, in your browser — your log history, daily snapshots, cached inventory &amp; prices, settings and manual costs. Persistent until you clear it with the button below.</td>
+                  <td>Only locally, in your browser — your log history, attack history, daily snapshots, cached inventory &amp; prices, target statuses, settings and manual costs. Persistent until you clear it with the button below.</td>
                   <td>Nobody</td>
-                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, and your own energy use against your gym target.</td>
+                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, and where players you've beaten are now.</td>
                   <td>Stored locally only if you tick “Remember” / Not shared</td>
-                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
+                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p><strong>Recommended:</strong>
-            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
             with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
             You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
         </details>

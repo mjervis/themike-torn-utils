@@ -14,6 +14,7 @@ import {
 import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.js';
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
+import { createTargetsPage } from './targets-page.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
   buildLedger, parseTrades, tradeSummary, realisedByDay,
@@ -256,7 +257,13 @@ async function hydrate() {
   const [catalog, logTypes, inv] = await Promise.all([
     meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
   ]);
-  if (!catalog || state.live) return {}; // nothing to show yet, or a load finished meanwhile
+  if (state.live) return {}; // a load finished meanwhile
+  if (!catalog) {
+    // Only the Targets page has been used: it doesn't need the item catalogue.
+    const tg = await targets.restoreSaved({ db: state.db, player: last.id });
+    if (tg) state.player ??= last;
+    return tg ? { targets: tg } : {};
+  }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
@@ -280,9 +287,10 @@ async function hydrate() {
   await renderSavedSummary();
   // The other pages read the Settings log types, so they go after renderLogTypes above.
   const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
-  const [en, tr] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx)]);
+  const [en, tr, tg] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx)]);
   if (en) at.energy = en;
   if (tr) at.training = tr;
+  if (tg) at.targets = tg;
   return at;
 }
 
@@ -619,15 +627,20 @@ function render() {
 }
 
 // ---------- pages ----------
+/** The key owner, looked up once per key and remembered so their saved data shows on the next visit. */
+async function currentPlayer() {
+  await dbReady;
+  if (!state.player) {
+    state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
+    store.set('player', { id: state.player.id, name: state.player.name });
+  }
+  return state.player;
+}
 const energy = createEnergyPage({
   $, store, status, esc, money, num: money0,
   client: () => state.client,
   db: async () => (await dbReady, state.db),
-  player: async () => {
-    await dbReady;
-    if (!state.player) state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
-    return state.player;
-  },
+  player: currentPlayer,
   catalog: async () => (state.catalog.size ? state.catalog : (await ensureCatalog(), state.catalog)),
   logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
   onError: reportError,
@@ -636,11 +649,7 @@ const training = createTrainingPage({
   $, store, status, esc, money, num: money0,
   client: () => state.client,
   db: async () => (await dbReady, state.db),
-  player: async () => {
-    await dbReady;
-    if (!state.player) state.player = await identify(state.db, state.client, await keyFingerprint(state.key));
-    return state.player;
-  },
+  player: currentPlayer,
   catalog: async () => (state.catalog.size ? state.catalog : (await ensureCatalog(), state.catalog)),
   logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
   // Read after logTypes(), which renders the Settings checkboxes these come from.
@@ -650,11 +659,19 @@ const training = createTrainingPage({
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training', 'settings'];
+const targets = createTargetsPage({
+  $, store, status, esc, num: money0,
+  client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: currentPlayer,
+  logPages: () => settings.read().logPages,
+  onError: reportError,
+});
+const PAGES = ['inventory', 'energy', 'training', 'targets', 'settings'];
 // Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
-const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, settings: () => true };
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, settings: () => true };
 // Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), settings: load };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -665,7 +682,7 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', settings: 'Settings' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
   savedStatus();
   if (state.client && !live[page]()) loaders[page]();
@@ -995,6 +1012,7 @@ $('#forget-btn').addEventListener('click', async () => {
   $('#results').hidden = true;
   $('#en-results').hidden = true;
   $('#tr-results').hidden = true;
+  $('#tg-results').hidden = true;
   status('Your key and all data saved by this page — logs, snapshots and settings — have been removed from this browser.');
   renderSavedSummary();
 });

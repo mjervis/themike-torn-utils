@@ -1,10 +1,11 @@
 # Torn Utils
 
-A static, client-side web app for [Torn](https://www.torn.com) with three pages:
+A static, client-side web app for [Torn](https://www.torn.com) with four pages:
 
 - **Inventory profit** — your inventory alongside what you paid for each item, what it's worth now, and the profit if you sell it, with the item market fee (5%) and anonymous listing fee (+10%) applied. The **Trading** tab adds up everything you've bought and sold, with realised profit on sales and unrealised profit on what you still hold.
 - **Energy** — gym energy spent this week against your faction's training requirement, what else your energy went on, and a "best options" plan for when to take Xanax, use refills and drink energy cans to hit the target.
 - **Training cost** — the consumables you've used for training (Xanax, Ecstasy, energy drinks, erotic DVDs, candy…), grouped into happy jumps, with the cost per jump, per energy and per stat point gained.
+- **Targets** — everyone you've beaten, from your attack history, with where they are now: ready to hit, in hospital (with a countdown), in jail, abroad or flying, plus last active, life and the fair fight from your last win. Filter by level, when you beat them and how recently they were active.
 
 **Live:** https://mjervis.github.io/themike-torn-utils/
 
@@ -23,6 +24,8 @@ No server, no build step. Your API key goes from your browser straight to `api.t
 | Lowest listing (optional) | `GET /market/{id}/itemmarket` | Public |
 | Energy bar, cooldowns, refills | `GET /user/bars`, `/user/cooldowns`, `/user/refills` | Minimal |
 | Gym training this week | `GET /user/log?log=<gym train ids>&from=<week start>`, with `/user/gym` + `/torn/gyms` for energy per train | **Full** |
+| Your attacks (Targets) | `GET /user/attacks?filters=outgoing` — whole history once, then only newer attacks | Limited |
+| Target status, last action, life | `GET /user/{id}/profile` — one call per target, only when you check them | Public |
 | Attacks, Xanax, cans, refills this week | `GET /user/personalstats?stat=…` now and at the week start | Public |
 
 **Saved locally, fetched incrementally.** Everything is kept in the browser (IndexedDB), per player:
@@ -43,6 +46,8 @@ A first load is ~30 calls; a repeat load is typically **1**. The Energy page rea
 **Trading.** Purchases, finds, sales and item uses form one ledger per item, matched first in, first out: each sale is set against your oldest stock, so its realised profit is the sale proceeds after fees minus what those units cost. Item market sales use the fee in the log, or the item market fee setting when the log doesn't give one. Units sold with no purchase before them (e.g. bought before your saved history) are shown as uncosted and left out of realised profit. Unrealised profit is the Holdings figure for what you still hold, so *overall profit* = realised + unrealised. The range (7/30/90 days, all) and Trade goods / Personal / All choices apply. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.
 
 **Training cost.** Item use logs are matched against your purchases the same way, so each Xanax, can or DVD you use is costed at what you paid (or, by choice, today's market value; units with no purchase on record always use market value and are marked ≈). Gym training logs are grouped into bursts; a burst with Ecstasy or a big happy item (≥ 500 happy, e.g. an erotic DVD) used within the hour before it is a **jump**, and everything used since your previous training — up to 3 days back — counts towards that jump's cost. Where gym logs record stat gains, the page shows cost per stat point and how a jump's stats per energy compare with your ordinary training. Weeks follow the Energy page's week start. Points refills aren't costed.
+
+**Targets.** Your outgoing attacks are saved like logs: read back as far as the log page setting allows the first time, then only new ones. Anyone you've attacked, mugged, hospitalised, looted, arrested or claimed a bounty on counts as beaten. Checking where they are costs one call per player, so “Check statuses” only looks up the most recently beaten few (20 by default, within the level and date filters) whose status is over a minute old; each row also has its own check button. Hospital and jail timers count down from the last check, and a target whose timer has run out shows as Ready — check again before attacking, as they may have been hit since. Statuses are saved with the time they were checked.
 
 **History.** A snapshot of every holding's quantity, price and cost is saved once per Torn day you load the page. The History tab charts market value and profit after fees over 7/30/90 days or all time, shows changes since yesterday / last week / last month, and lists per-item changes. Settings has **Download backup** / **Restore backup** (JSON; never includes the API key) so history survives clearing browser data or moving device.
 
@@ -90,7 +95,7 @@ The app follows the [API ToS guidelines](https://www.torn.com/api.html):
 
 | Data Storage | Data Sharing | Purpose of Use | Key Storage & Sharing | Key Access Level |
 | --- | --- | --- | --- | --- |
-| Only locally, in the browser (log history, daily snapshots, cached inventory & prices, settings, manual costs) — kept until the user clears it | Nobody | Not eligible — only the end user has access | Stored locally only if “Remember” is ticked / Not shared | Custom: `user` → basic, inventory, log, bars, cooldowns, refills, gym, personalstats; `torn` → items, logtypes, gyms; `market` → itemmarket. Or Full Access. |
+| Only locally, in the browser (log history, attack history, target statuses, daily snapshots, cached inventory & prices, settings, manual costs) — kept until the user clears it | Nobody | Not eligible — only the end user has access | Stored locally only if “Remember” is ticked / Not shared | Custom: `user` → basic, inventory, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; `torn` → items, logtypes, gyms; `market` → itemmarket. Or Full Access. |
 
 - The ToS table is shown where the key is entered, with a link to create a custom key with only these selections.
 - Invalid or disabled keys (error codes 1, 2, 10, 13, 18) are forgotten immediately and never re-sent, as required to avoid IP bans. Rate-limit/blocked responses (5, 8, 9, 14) stop all further calls.

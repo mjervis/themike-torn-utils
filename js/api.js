@@ -149,6 +149,30 @@ export function createClient(key) {
       return [...seen.values()].sort((a, b) => b.timestamp - a.timestamp);
     },
 
+    /**
+     * Attacks you made, newest first, walking back in time like logs(): from `to` (default: now)
+     * back to `from` (unix seconds) or `maxPages` pages of 100.
+     */
+    async attacks({ from, to: before, maxPages = 20, onPage } = {}) {
+      const seen = new Map();
+      let to = before;
+      for (let p = 0; p < maxPages; p++) {
+        const body = await get('/user/attacks', { filters: 'outgoing', limit: 100, sort: 'DESC', from, to });
+        const list = body.attacks ?? [];
+        const fresh = list.filter((a) => !seen.has(a.id));
+        for (const a of fresh) seen.set(a.id, a);
+        onPage?.(seen.size, p + 1);
+        if (list.length < 100 || fresh.length === 0) break;
+        to = Math.min(...list.map((a) => a.started));
+      }
+      return [...seen.values()].sort((a, b) => b.started - a.started);
+    },
+
+    /** Another player's public profile: level, faction, status (hospital, travel…), last action, life. */
+    async profile(id) {
+      return (await get(`/user/${id}/profile`)).profile;
+    },
+
     /** Energy, nerve, happy and life bars. */
     async bars() {
       return (await get('/user/bars')).bars;
