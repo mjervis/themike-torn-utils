@@ -231,6 +231,27 @@ a.button {
 a.button:hover { background: var(--accent); }
 #tg-table td { vertical-align: top; }
 
+/* Chain competition */
+.team-vampires { --team: #e0464b; }
+.team-reapers { --team: #4aa3e8; }
+.team-demons { --team: #f08c2e; }
+.team-undead { --team: #a46be0; }
+.ch-banner { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
+.ch-title { font-size: 16px; font-weight: 700; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ch-chain { margin-top: 6px; font-size: 15px; }
+.ch-count { font-size: 26px; font-weight: 700; }
+.ch-meter { height: 10px; margin: 8px 0; }
+.team-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--team); margin-right: 6px; }
+.ch-teams { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+.ch-team { background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--team); border-radius: var(--radius); padding: 10px 12px; }
+.ch-team header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ch-team h3 { margin: 0 0 6px; font-size: 15px; color: var(--team); }
+.ch-team table { width: 100%; margin-bottom: 6px; }
+.ch-list { margin-top: 6px; display: grid; gap: 2px; }
+#ch-setup { margin-top: 14px; }
+#ch-setup.needs-attention summary::after { content: ' — some names need matching'; color: var(--warn); }
+.warn { color: var(--warn); }
+
 @media (max-width: 900px) {
   .energy-grid { grid-template-columns: 1fr; }
 }
