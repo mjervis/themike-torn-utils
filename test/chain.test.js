@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
 import {
   COMPETITION, matchTeams, reportTotals, chainState, memberTotals, standings, syncChain,
-  syncFactionAttacks, weekHits, trimFactionAttack, bonusList,
+  syncFactionAttacks, weekHits, trimFactionAttack, bonusList, raffleChain, raffleHits,
 } from '../js/chain.js';
 
 const START = COMPETITION.start;
@@ -211,4 +211,65 @@ test('weekHits splits bonus hits out of respect per hit', () => {
   ].map(trimFactionAttack);
   const t = weekHits(attacks).get(1);
   assert.deepEqual([t.hits, t.bonusHits, t.bonusRespect, t.regularRespect, t.perHit], [3, 1, 10, 8, 4]);
+});
+
+test('raffleChain is the first chain to reach the goal, or the latest until one does', () => {
+  const broke = report(1, START + 10, START + 500, 1800, []);
+  const second = report(2, START + 600, START + 9000, 2600, []);
+  const third = report(3, START + 9100, 0, 40, []);
+  assert.equal(raffleChain(chainState([broke, second, third], { id: 3, current: 40, start: START + 9100 })).id, 2);
+  assert.equal(raffleChain(chainState([broke, report(3, START + 600, 0, 300, [])], { id: 3, current: 300, start: START + 600 })).id, 3);
+  assert.equal(raffleChain(chainState([broke], { id: 0, current: 0 })).id, 1);
+});
+
+test('raffleHits counts chain positions 1 to 2,500 of the raffle chain from the attack log', () => {
+  const chain = { id: 2, start: START + 600, end: START + 9000, length: 2600 };
+  const attacks = [
+    fAttack(1, START + 700, 1, 'Attacked', 1),
+    fAttack(2, START + 800, 1, 'Mugged', 2500),
+    fAttack(3, START + 900, 1, 'Attacked', 2501),   // after the 2,500th
+    fAttack(4, START + 300, 1, 'Attacked', 50),     // an earlier chain
+    fAttack(5, START + 9500, 2, 'Attacked', 10),    // a later chain
+    fAttack(6, START + 850, 2, 'Lost', 0),          // not a hit
+  ].map(trimFactionAttack);
+  const r = raffleHits({ chain, reports: [], attacks });
+  assert.deepEqual([...r.hits], [[1, 2]]);
+  assert.equal(r.exact, true);
+});
+
+test('raffleHits without the attack log uses the copy of the report saved at 2,500 and says how far past it was', () => {
+  const chain = { id: 2, start: START, end: null, length: 2700 };
+  const now = report(2, START, 0, 2700, [attacker(1, { leave: 90 })]);
+  const atGoal = report(2, START, 0, 2510, [attacker(1, { leave: 60 })]);
+  let r = raffleHits({ chain, reports: [now], capped: { 2: { report: atGoal, current: 2510 } } });
+  assert.deepEqual([r.hits.get(1), r.exact, r.extra], [60, false, 10]);
+  r = raffleHits({ chain: { ...chain, length: 1200 }, reports: [now] });
+  assert.deepEqual([r.hits.get(1), r.exact], [90, true]);
+});
+
+test('standings enters raffles on raffle hits when given them', () => {
+  const r = report(2, START, 0, 0, [attacker(1, { leave: 120 }), attacker(2, { leave: 60 })]);
+  const teams = [{ id: 'a', name: 'A', members: [] }];
+  const s = standings({ teams, assignment: new Map([[1, 'a'], [2, 'a']]), names: new Map(), totals: memberTotals([r]), raffleHits: new Map([[1, 70], [2, 40]]) });
+  assert.deepEqual(s.raffles.map((x) => x.entrants.map((m) => [m.id, m.raffleHits])), [[[1, 70]], []]);
+});
+
+test('syncChain keeps the report as first seen at 2,500 for the raffles', async () => {
+  const db = memoryDb();
+  let live = { id: 2, current: 2490, timeout: 250, start: START };
+  let leave = 80;
+  const client = {
+    async factionMembers() { return []; },
+    async chain() { return live; },
+    async chains() { return []; },
+    async chainReport() { return report(2, START, 0, live.current, [attacker(1, { leave })]); },
+  };
+  let saved = await syncChain(db, client, 7, { listChains: true, now: START + 100 });
+  assert.equal(saved.capped[2], undefined);
+  live = { ...live, current: 2503 }; leave = 85;
+  saved = await syncChain(db, client, 7, { now: START + 160 });
+  assert.equal(saved.capped[2].current, 2503);
+  live = { ...live, current: 2600 }; leave = 120;
+  saved = await syncChain(db, client, 7, { now: START + 220 });
+  assert.equal(saved.capped[2].report.attackers[0].attacks.leave, 85); // kept as first seen
 });

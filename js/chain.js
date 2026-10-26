@@ -14,6 +14,7 @@ export const COMPETITION = {
   qualify: 30, // hits a member needs for their team payout
   placePrizes: [25e6, 15e6, 10e6, 5e6],
   soulCollector: 100e6, // highest respect from regular hits (bonus hits don't count)
+  // Raffle entry counts only hits 1–2,500 of the first chain to reach 2,500 (the running chain until then).
   raffles: [
     { id: 'trick', name: 'Trick or Treat', prize: 50e6, min: 50 },
     { id: 'blood', name: 'Bloodthirsty', prize: 100e6, min: 100 },
@@ -168,9 +169,10 @@ export function bonusList(reports) {
 /**
  * Standings: teams ranked by hits per member, with what each member and team is set to win.
  * `assignment` is Map(memberId -> teamId); `names` Map(memberId -> name); `totals` from memberTotals;
- * `allHits` (optional) from weekHits, for every hit in the week whether or not it was in a chain.
+ * `allHits` (optional) from weekHits, for every hit in the week whether or not it was in a chain;
+ * `raffleHits` (optional) Map(memberId -> hits) that count for the raffles, from raffleHits.
  */
-export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, allHits = null, broken = false, comp = COMPETITION }) {
+export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, allHits = null, raffleHits = null, broken = false, comp = COMPETITION }) {
   const factor = broken ? 0.5 : 1;
   const blank = { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0, regularRespect: 0, perHit: null };
   const memberRow = (id, team) => {
@@ -203,7 +205,12 @@ export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, al
     .filter((m) => m.hits > 0).sort((a, b) => b.hits - a.hits);
 
   const byRespect = [...players].filter((m) => m.regularRespect > 0).sort((a, b) => b.regularRespect - a.regularRespect);
-  const raffles = comp.raffles.map((r) => ({ ...r, prize: r.prize * factor, entrants: players.filter((m) => m.hits >= r.min) }));
+  // Raffles count hits in the raffle chain only (see raffleHits); without that, every chain hit.
+  const raffleCount = (m) => (raffleHits ? raffleHits.get(m.id) ?? 0 : m.hits);
+  const raffles = comp.raffles.map((r) => ({
+    ...r, prize: r.prize * factor,
+    entrants: players.filter((m) => raffleCount(m) >= r.min).map((m) => ({ ...m, raffleHits: raffleCount(m) })),
+  }));
   return {
     teams: rows,
     others,
@@ -255,7 +262,13 @@ export async function syncChain(db, client, player, { comp = COMPETITION, member
     onProgress?.(`Reading the report for the ${c.chain}-hit chain…`);
     reports[c.id] = trimReport(await client.chainReport(c.id));
   }
-  const value = { reports, members, finished, live: live ? { ...live, at: now } : null, at: now };
+  // The first time a chain is seen at 2,500 or more, keep its report as it was then: without the attack
+  // log it's the closest to "hits 1–2,500" for the raffles, since later reports include later hits.
+  const capped = { ...saved.capped };
+  if (live?.current >= comp.goal && latest?.id === live.id && !capped[live.id]) {
+    capped[live.id] = { report: trimReport(latest), current: live.current, at: now };
+  }
+  const value = { reports, members, finished, capped, live: live ? { ...live, at: now } : null, at: now };
   await meta.set(db, saveKey(player), value);
   return value;
 }
@@ -339,4 +352,38 @@ export function weekHits(attacks, comp = COMPETITION) {
     t.perHit = perHit(t.regularRespect, t.hits - t.bonusHits);
   }
   return out;
+}
+
+// ---------- raffles ----------
+
+/**
+ * The chain whose hits count for the raffles: the first since the start to reach the goal, or, until one
+ * has, the latest (the running chain, or the last one if it broke). `state` is from chainState.
+ */
+export function raffleChain(state, comp = COMPETITION) {
+  return state.chains.find((c) => c.length >= comp.goal) ?? state.chains.at(-1) ?? null;
+}
+
+/**
+ * Each member's hits 1–`comp.goal` in the raffle chain: { hits: Map(id -> n), exact, extra }.
+ * From the faction attack log when there is one (exact, by chain position). Otherwise from the chain's
+ * report — or, once it passed the goal, the copy saved when it was first seen there — which may include
+ * up to `extra` hits after the goal.
+ */
+export function raffleHits({ chain, reports, attacks = null, capped = {}, comp = COMPETITION }) {
+  const hits = new Map();
+  if (!chain) return { hits, exact: true, extra: 0 };
+  if (attacks) {
+    for (const a of attacks) {
+      if (!a.attacker || !HIT_RESULTS.has(a.result) || a.chain < 1 || a.chain > comp.goal) continue;
+      if (a.started < chain.start - 60 || (chain.end && a.started > chain.end)) continue;
+      hits.set(a.attacker.id, (hits.get(a.attacker.id) ?? 0) + 1);
+    }
+    return { hits, exact: true, extra: 0 };
+  }
+  const saved = capped[chain.id];
+  const report = saved?.report ?? reports.find((r) => r.id === chain.id);
+  for (const [id, t] of reportTotals(report)) hits.set(id, t.hits);
+  const upTo = saved ? saved.current : chain.length;
+  return { hits, exact: upTo <= comp.goal, extra: Math.max(0, upTo - comp.goal) };
 }
