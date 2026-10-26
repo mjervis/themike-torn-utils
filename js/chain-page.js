@@ -1,6 +1,6 @@
 import {
   COMPETITION, DEFAULT_TEAMS, matchTeams, chainState, memberTotals, standings, syncChain, savedChain,
-  syncFactionAttacks, savedFactionAttacks, weekHits, bonusList,
+  syncFactionAttacks, savedFactionAttacks, weekHits, bonusList, raffleChain, raffleHits,
 } from './chain.js';
 
 // The chain report and live chain are re-read this often while the page is open (2 calls each time).
@@ -119,7 +119,11 @@ export function createChainPage(ctx) {
     const line = lineUp();
     const names = new Map(line.members.map((m) => [m.id, m.name]));
     const allHits = data.attacks ? weekHits(data.attacks, comp) : null;
-    return { state, line, allHits, bonuses: bonusesWithTimes(countedReports), table: standings({ teams, assignment: line.assignment, names, totals, allHits, broken: state.broken && !state.reached, comp }) };
+    const raffle = raffleHits({ chain: raffleChain(state, comp), reports: countedReports, attacks: data.attacks, capped: s.capped, comp });
+    return {
+      state, line, allHits, raffle, bonuses: bonusesWithTimes(countedReports),
+      table: standings({ teams, assignment: line.assignment, names, totals, allHits, raffleHits: raffle.hits, broken: state.broken && !state.reached, comp }),
+    };
   }
 
   /** Bonus hits from the chain reports, with when each was made where the attack log has it. */
@@ -154,7 +158,7 @@ export function createChainPage(ctx) {
   function render() {
     if (!data.loaded) return;
     const now = Math.floor(Date.now() / 1000);
-    const { state, line, allHits, bonuses, table } = compute();
+    const { state, line, allHits, raffle, bonuses, table } = compute();
     const live = data.saved.live;
     const halved = state.broken && !state.reached;
 
@@ -194,7 +198,7 @@ export function createChainPage(ctx) {
 
     $('#ch-teams').innerHTML = table.teams.map((t) => teamCard(t, !!allHits)).join('');
     renderWeek(allHits, line);
-    $('#ch-prizes').innerHTML = prizes(table);
+    $('#ch-prizes').innerHTML = prizes(table, state, raffle);
     renderBonuses(bonuses, line);
     $('#ch-others').innerHTML = table.others.length ? `
       <h2 class="section-title">Hitting, but not on a team</h2>
@@ -292,13 +296,20 @@ export function createChainPage(ctx) {
     }).join('');
   }
 
-  function prizes(table) {
+  function prizes(table, state, raffleCount) {
+    const chain = raffleChain(state, comp);
+    const which = !chain ? 'the first 2,500-hit chain'
+      : chain.length >= comp.goal ? 'hits 1–2,500 of the chain that reached 2,500'
+      : chain.ongoing ? 'hits in the running chain, up to its 2,500th' : 'hits in the last chain, until one reaches 2,500';
+    const approx = raffleCount.exact ? ''
+      : ` <span class="warn" title="Your key can't read the faction attack log, so hits after the 2,500th can't be told apart">(may include up to ${n0(raffleCount.extra)} hits after the 2,500th)</span>`;
     const soul = table.soulCollector;
     const soulList = soul.leaders.map((m, i) => `<div>${i + 1}. ${playerLink(m)} <span class="muted small">${esc(teamName(m.team))}</span> — ${r2(m.regularRespect)}</div>`).join('')
       || '<div class="muted">No respect yet</div>';
     const raffle = (r) => `<div class="card"><div class="label">${esc(r.name)} · ${shortMoney(r.prize)}</div>
       <div class="value">${n0(r.entrants.length)} <span class="of">in the draw</span></div>
-      <div class="sub">Random raffle among ${r.min}+ hits${r.entrants.length ? `: ${r.entrants.map((m) => esc(m.name)).join(', ')}` : ''}</div></div>`;
+      <div class="sub">Random raffle among ${r.min}+ hits, counting ${which}${approx}${r.entrants.length
+        ? `: ${r.entrants.map((m) => `${esc(m.name)} <span class="muted">(${n0(m.raffleHits)})</span>`).join(', ')}` : ''}</div></div>`;
     return `
       <div class="card"><div class="label">Soul Collector · ${shortMoney(soul.prize)}</div>
         <div class="sub">Highest respect from regular hits (bonus hits don't count)</div>
