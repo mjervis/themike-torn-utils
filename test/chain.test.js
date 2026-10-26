@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
 import {
   COMPETITION, matchTeams, reportTotals, chainState, memberTotals, standings, syncChain,
+  syncFactionAttacks, weekHits, trimFactionAttack,
 } from '../js/chain.js';
 
 const START = COMPETITION.start;
@@ -127,4 +128,62 @@ test('syncChain fetches finished chain reports once and the latest report every 
   calls.length = 0;
   await syncChain(db, client, 7, { now: START + 9260 });
   assert.deepEqual(calls, ['chain', 'report:latest']);
+});
+
+test('standings averages hits over each team\'s qualified members only', () => {
+  const r = report(2, START, 0, 0, [attacker(1, { leave: 40 }), attacker(2, { leave: 60 }), attacker(3, { leave: 5 })]);
+  const teams = [{ id: 'a', name: 'A', members: [] }, { id: 'b', name: 'B', members: [] }];
+  const s = standings({ teams, assignment: new Map([[1, 'a'], [2, 'a'], [3, 'a']]), names: new Map(), totals: memberTotals([r]) });
+  const a = s.teams.find((t) => t.id === 'a');
+  assert.equal(a.qualifiedAvg, 50); // (40 + 60) / 2; the 5-hit member isn't qualified
+  assert.equal(s.teams.find((t) => t.id === 'b').qualifiedAvg, null);
+});
+
+const fAttack = (id, started, attackerId, result, chain = 0, respect = 2) => ({
+  id, code: `c${id}`, started, ended: started + 20, result, chain, respect_gain: respect, respect_loss: 0,
+  attacker: { id: attackerId, name: `M${attackerId}`, level: 50, faction: { id: 9, name: 'Us' } },
+  defender: { id: 900 + id, name: 'T', level: 10, faction: null }, modifiers: {},
+});
+
+test('weekHits counts wins in and out of chains inside the week only', () => {
+  const attacks = [
+    fAttack(1, START - 10, 1, 'Attacked', 5),          // before the start
+    fAttack(2, START + 10, 1, 'Attacked', 6),
+    fAttack(3, START + 20, 1, 'Mugged', 0, 1.5),       // outside a chain
+    fAttack(4, START + 30, 1, 'Lost'),                 // an attack, not a hit
+    fAttack(5, START + 40, 2, 'Hospitalized', 7),
+    fAttack(6, COMPETITION.end, 2, 'Attacked', 0),     // after the end
+    { ...fAttack(7, START + 50, 3, 'Attacked'), attacker: null }, // stealthed: no attacker to credit
+  ].map(trimFactionAttack);
+  const w = weekHits(attacks);
+  assert.deepEqual({ ...w.get(1), lastHit: undefined }, { id: 1, name: 'M1', hits: 2, chainHits: 1, respect: 3.5, attacks: 3, lastHit: undefined });
+  assert.equal(w.get(1).lastHit, START + 20);
+  assert.equal(w.get(2).hits, 1);
+  assert.equal(w.size, 2);
+});
+
+test('syncFactionAttacks reads the week once, then only newer attacks, and nothing past the end', async () => {
+  const db = memoryDb();
+  const asks = [];
+  const client = {
+    async factionAttacks(opts) {
+      asks.push({ from: opts.from, to: opts.to });
+      return [fAttack(1, START + 100, 1, 'Attacked'), fAttack(2, START - 50, 1, 'Attacked')];
+    },
+  };
+  let saved = await syncFactionAttacks(db, client, 7, { now: START + 1000 });
+  assert.deepEqual(asks[0], { from: START, to: START + 1000 });
+  assert.deepEqual(saved.attacks.map((a) => a.id), [1]); // the one before the start isn't kept
+
+  saved = await syncFactionAttacks(db, client, 7, { now: COMPETITION.end + 5000 });
+  assert.deepEqual(asks[1], { from: START + 100 - 300, to: COMPETITION.end });
+  assert.equal(saved.attacks.length, 1);
+});
+
+test('matchTeams matches members given with a Torn id by id, whatever their name', () => {
+  const members = [{ id: 2238049, name: 'DontTrip' }, { id: 4505292, name: 'THEMikeUK' }, { id: 77, name: 'THEMikeUK2' }];
+  const teams = [{ id: 'u', members: [{ name: 'Mike', id: 4505292 }, { name: 'DontTrip', id: 2238049 }, { name: 'Gone', id: 1 }] }];
+  const { assigned, unmatched } = matchTeams(members, teams);
+  assert.deepEqual([...assigned].sort(), [[2238049, 'u'], [4505292, 'u']]);
+  assert.deepEqual(unmatched.map((u) => u.name), ['Gone']); // id not in the faction: falls back to the name, which no one has
 });
