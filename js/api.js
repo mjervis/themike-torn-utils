@@ -69,6 +69,22 @@ export function createClient(key) {
     return body;
   }
 
+  /** Outgoing attacks from `path`, newest first, from `to` back to `from` or `maxPages` pages of 100. */
+  async function walkAttacks(path, { from, to: before, maxPages = 20, onPage } = {}) {
+    const seen = new Map();
+    let to = before;
+    for (let p = 0; p < maxPages; p++) {
+      const body = await get(path, { filters: 'outgoing', limit: 100, sort: 'DESC', from, to });
+      const list = body.attacks ?? [];
+      const fresh = list.filter((a) => !seen.has(a.id));
+      for (const a of fresh) seen.set(a.id, a);
+      onPage?.(seen.size, p + 1);
+      if (list.length < 100 || fresh.length === 0) break;
+      to = Math.min(...list.map((a) => a.started));
+    }
+    return [...seen.values()].sort((a, b) => b.started - a.started);
+  }
+
   return {
     /** Number of requests this client has sent to Torn. */
     get calls() { return calls; },
@@ -153,19 +169,16 @@ export function createClient(key) {
      * Attacks you made, newest first, walking back in time like logs(): from `to` (default: now)
      * back to `from` (unix seconds) or `maxPages` pages of 100.
      */
-    async attacks({ from, to: before, maxPages = 20, onPage } = {}) {
-      const seen = new Map();
-      let to = before;
-      for (let p = 0; p < maxPages; p++) {
-        const body = await get('/user/attacks', { filters: 'outgoing', limit: 100, sort: 'DESC', from, to });
-        const list = body.attacks ?? [];
-        const fresh = list.filter((a) => !seen.has(a.id));
-        for (const a of fresh) seen.set(a.id, a);
-        onPage?.(seen.size, p + 1);
-        if (list.length < 100 || fresh.length === 0) break;
-        to = Math.min(...list.map((a) => a.started));
-      }
-      return [...seen.values()].sort((a, b) => b.started - a.started);
+    async attacks(opts = {}) {
+      return walkAttacks('/user/attacks', opts);
+    },
+
+    /**
+     * Attacks made by your faction's members, newest first, walked back like attacks().
+     * Needs a Limited key (or a custom one with faction → attacks) and faction API access permission.
+     */
+    async factionAttacks(opts = {}) {
+      return walkAttacks('/faction/attacks', opts);
     },
 
     /** Another player's public profile: level, faction, status (hospital, travel…), last action, life. */

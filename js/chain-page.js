@@ -1,5 +1,6 @@
 import {
   COMPETITION, DEFAULT_TEAMS, matchTeams, chainState, memberTotals, standings, syncChain, savedChain,
+  syncFactionAttacks, savedFactionAttacks, weekHits,
 } from './chain.js';
 
 // The chain report and live chain are re-read this often while the page is open (2 calls each time).
@@ -15,7 +16,8 @@ export function createChainPage(ctx) {
   const { $, store, status, esc, money, num } = ctx;
   const comp = COMPETITION;
   const teams = DEFAULT_TEAMS;
-  const data = { loaded: false, live: false, saved: null };
+  // `attacks` is the faction attack log for the week, or null if this key can't read it.
+  const data = { loaded: false, live: false, saved: null, attacks: null, noAttackLog: false };
   // Member id -> team id ('' for no team), where someone has changed the announced line-up on this device.
   let overrides = store.get('chainTeams', {});
 
@@ -54,6 +56,16 @@ export function createChainPage(ctx) {
       // The member list and finished chains are read once a session; the live chain on every refresh.
       const first = !data.live || data.player !== player;
       const saved = await syncChain(db, client, player, { comp, members: first, listChains: first, onProgress: quiet ? null : status });
+      // Every hit in the week needs faction API access; without it the page shows chain hits only.
+      if (first || !data.noAttackLog) {
+        try {
+          data.attacks = (await syncFactionAttacks(db, client, player, { comp, onProgress: quiet ? null : status })).attacks;
+          data.noAttackLog = false;
+        } catch (err) {
+          if (err.fatal || ![7, 16].includes(err.code)) throw err;
+          data.noAttackLog = true;
+        }
+      }
       Object.assign(data, { loaded: true, live: true, db, player, saved });
       $('#ch-results').hidden = false;
       render();
@@ -72,9 +84,9 @@ export function createChainPage(ctx) {
   /** Show what's saved in this browser without a key or API calls. Returns when it's from, or null. */
   async function restoreSaved({ db, player }) {
     if (data.loaded) return null;
-    const saved = await savedChain(db, player);
+    const [saved, attacks] = await Promise.all([savedChain(db, player), savedFactionAttacks(db, player)]);
     if (!saved?.members || data.loaded) return null;
-    Object.assign(data, { loaded: true, db, player, saved });
+    Object.assign(data, { loaded: true, db, player, saved, attacks: attacks?.attacks ?? null });
     $('#ch-results').hidden = false;
     render();
     return saved.at;
@@ -102,7 +114,8 @@ export function createChainPage(ctx) {
     const totals = memberTotals(reports.filter((r) => counted.has(r.id)));
     const line = lineUp();
     const names = new Map(line.members.map((m) => [m.id, m.name]));
-    return { state, line, table: standings({ teams, assignment: line.assignment, names, totals, broken: state.broken && !state.reached, comp }) };
+    const allHits = data.attacks ? weekHits(data.attacks, comp) : null;
+    return { state, line, allHits, table: standings({ teams, assignment: line.assignment, names, totals, allHits, broken: state.broken && !state.reached, comp }) };
   }
 
   // ---------- rendering ----------
@@ -126,7 +139,7 @@ export function createChainPage(ctx) {
   function render() {
     if (!data.loaded) return;
     const now = Math.floor(Date.now() / 1000);
-    const { state, line, table } = compute();
+    const { state, line, allHits, table } = compute();
     const live = data.saved.live;
     const halved = state.broken && !state.reached;
 
@@ -141,6 +154,8 @@ export function createChainPage(ctx) {
         <div class="sub">${comp.qualify}+ hits for a team payout</div></div>
       <div class="card"><div class="label">Prizes</div><div class="value ${halved ? 'neg' : 'pos'}">${halved ? 'Halved' : 'Full'}</div>
         <div class="sub">${halved ? 'the chain broke before 2,500' : state.reached ? 'goal reached!' : 'as long as the chain holds'}</div></div>
+      ${allHits ? `<div class="card"><div class="label">All hits this week</div><div class="value">${n0([...allHits.values()].reduce((s, m) => s + m.hits, 0))}</div>
+        <div class="sub">by ${n0(allHits.size)} members, in a chain or not · to ${tct(comp.end)} TCT</div></div>` : ''}
       <div class="card"><div class="label">Leader</div><div class="value small">${esc(table.teams[0]?.name ?? '—')}</div>
         <div class="sub">${r2(table.teams[0]?.score)} hits per member</div></div>`;
 
@@ -149,13 +164,15 @@ export function createChainPage(ctx) {
       <td><span class="team-dot"></span>${esc(t.name)}</td>
       <td class="num">${n0(t.size)}</td>
       <td class="num">${n0(t.hits)}</td>
+      <td class="num">${n0(t.allHits)}</td>
       <td class="num"><strong>${r2(t.score)}</strong></td>
       <td class="num">${n0(t.qualified)} / ${n0(t.size)}</td>
       <td class="num">${shortMoney(t.prizeEach)}</td>
       <td class="num">${shortMoney(t.payout)}</td>
     </tr>`).join('');
 
-    $('#ch-teams').innerHTML = table.teams.map(teamCard).join('');
+    $('#ch-teams').innerHTML = table.teams.map((t) => teamCard(t, !!allHits)).join('');
+    renderWeek(allHits, line);
     $('#ch-prizes').innerHTML = prizes(table);
     $('#ch-others').innerHTML = table.others.length ? `
       <h2 class="section-title">Hitting, but not on a team</h2>
@@ -189,19 +206,45 @@ export function createChainPage(ctx) {
 
   const placeLabel = (p) => ['1st', '2nd', '3rd', '4th'][p - 1] ?? `${p}th`;
 
-  function teamCard(t) {
+  function teamCard(t, withAll) {
     const rows = t.members.map((m, i) => `<tr>
       <td class="num muted">${i + 1}</td>
       <td>${playerLink(m)}</td>
       <td class="num"><strong>${n0(m.hits)}</strong></td>
+      ${withAll ? `<td class="num">${n0(m.allHits)}</td>` : ''}
       <td class="num">${r2(m.regularRespect)}</td>
       <td>${m.qualified ? `<span class="pos" title="${comp.qualify}+ hits: qualified for the team payout">✓</span>` : `<span class="muted small">needs ${n0(comp.qualify - m.hits)}</span>`}</td>
-    </tr>`).join('') || '<tr><td colspan="5" class="muted">No members matched yet — set them under Teams below.</td></tr>';
+    </tr>`).join('') || `<tr><td colspan="${withAll ? 6 : 5}" class="muted">No members matched yet — set them under Teams below.</td></tr>`;
     return `<section class="ch-team team-${t.id}">
       <header><h3>${placeLabel(t.place)} · ${esc(t.name)}</h3><span>${r2(t.score)} <span class="muted small">per member</span></span></header>
-      <table class="mini"><thead><tr><th></th><th>Member</th><th class="num">Hits</th><th class="num">Respect</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="muted small">${n0(t.hits)} hits · ${n0(t.qualified)} of ${n0(t.size)} qualified · ${shortMoney(t.prizeEach)} each</div>
+      <table class="mini"><thead><tr><th></th><th>Member</th><th class="num" title="Hits in the chain">Chain</th>${withAll ? '<th class="num" title="Every hit this week, in a chain or not">All</th>' : ''}<th class="num">Respect</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="muted small">${n0(t.hits)} chain hits${withAll ? ` · ${n0(t.allHits)} in all` : ''} · ${n0(t.qualified)} of ${n0(t.size)} qualified${t.qualifiedAvg == null ? '' : `, averaging ${r2(t.qualifiedAvg)} hits`} · ${shortMoney(t.prizeEach)} each</div>
     </section>`;
+  }
+
+  /** Every member's hits in the week from the faction attack log, team or not. */
+  function renderWeek(allHits, line) {
+    $('#ch-week').hidden = !allHits && !data.noAttackLog;
+    if (!allHits) {
+      $('#ch-week-body').innerHTML = data.noAttackLog
+        ? '<p class="muted">Counting every hit, not just chain hits, needs a key whose owner has faction API access (and Limited access, or a custom key with faction → attacks).</p>' : '';
+      return;
+    }
+    const rows = [...allHits.values()].sort((a, b) => b.hits - a.hits || b.respect - a.respect);
+    const names = new Map(line.members.map((m) => [m.id, m.name]));
+    $('#ch-week-body').innerHTML = `<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Member</th><th>Team</th>
+      <th class="num">Hits</th><th class="num">In a chain</th><th class="num">Outside</th><th class="num">Respect</th><th class="num">Attacks</th><th>Last hit (TCT)</th></tr></thead>
+      <tbody>${rows.map((m, i) => `<tr class="${line.assignment.has(m.id) ? `team-${line.assignment.get(m.id)}` : ''}">
+        <td class="num muted">${i + 1}</td>
+        <td>${playerLink({ id: m.id, name: names.get(m.id) ?? m.name })}</td>
+        <td>${line.assignment.has(m.id) ? `<span class="team-dot"></span>${esc(teamName(line.assignment.get(m.id)))}` : '<span class="muted">—</span>'}</td>
+        <td class="num"><strong>${n0(m.hits)}</strong></td>
+        <td class="num">${n0(m.chainHits)}</td>
+        <td class="num">${n0(m.hits - m.chainHits)}</td>
+        <td class="num">${r2(m.respect)}</td>
+        <td class="num muted">${n0(m.attacks)}</td>
+        <td>${m.lastHit ? tct(m.lastHit) : '—'}</td>
+      </tr>`).join('') || '<tr><td colspan="9" class="muted">No attacks yet.</td></tr>'}</tbody></table></div>`;
   }
 
   function prizes(table) {
