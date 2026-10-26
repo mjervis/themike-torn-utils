@@ -359,6 +359,17 @@
         <div class="cards" id="ch-prizes"></div>
         <div id="ch-others"></div>
 
+        <section id="ch-bonus" hidden>
+          <h2 class="section-title">Bonus hits</h2>
+          <p class="muted">Hits at 10, 25, 50, 100, 250, 500, 1,000 and 2,500 earn bonus respect. It's left out of respect per hit and the Soul Collector race.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th class="num">Hit</th><th>Member</th><th>Team</th><th class="num">Bonus respect</th><th>When (TCT)</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
         <section id="ch-week" hidden>
           <h2 class="section-title">All hits this week</h2>
           <p class="muted">Every hit by every faction member from Sun 25 Oct 14:00 TCT to midnight at the end of Sat 31 Oct, in a chain or not, from the faction attack log. These don't change the competition scores, which count chain hits.</p>
@@ -380,7 +391,7 @@
 
         <p class="footnote">Scores come from Torn's chain reports for chains running since the start: a hit is any chain attack that left, mugged or hospitalised the target (assists, losses, escapes and stalemates don't count).
           Team score = team hits ÷ team members; teams level on score share a place. Members need 30+ hits for their team payout.
-          Soul Collector respect leaves out bonus hits (10, 25, 50, 100…). Prizes halve if a chain ends before reaching 2,500.
+          Soul Collector respect and respect per hit leave out bonus hits (10, 25, 50, 100…) and their respect. Prizes halve if a chain ends before reaching 2,500.
           Raffles and the Pumpkin King / Queen vote are drawn by leadership; this page only shows who's eligible.
           The chain and its report are re-read every minute while this page is open (2 API calls), plus 1 for new attacks when the key has faction API access.
           All hits counts every attack a member won (attacked, mugged, hospitalised, arrested, looted or claimed a bounty), in a chain or not.</p>

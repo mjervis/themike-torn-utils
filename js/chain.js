@@ -132,7 +132,16 @@ export function chainState(reports, live, comp = COMPETITION) {
   };
 }
 
-/** Each member's hits and respect summed over the given reports: Map(id -> totals as in reportTotals). */
+/** Chain positions that earn bonus respect. */
+export const BONUS_HITS = new Set([10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000]);
+
+/** Respect per hit, leaving out bonus hits and their respect; null with no regular hits. */
+const perHit = (regularRespect, regularHits) => (regularHits > 0 ? regularRespect / regularHits : null);
+
+/**
+ * Each member's hits and respect summed over the given reports: Map(id -> totals as in reportTotals,
+ * plus regularRespect and perHit, both leaving out bonus hits).
+ */
 export function memberTotals(reports) {
   const out = new Map();
   for (const r of reports) {
@@ -142,8 +151,18 @@ export function memberTotals(reports) {
       out.set(id, s);
     }
   }
-  for (const s of out.values()) s.regularRespect = s.respect - s.bonusRespect;
+  for (const s of out.values()) {
+    s.regularRespect = s.respect - s.bonusRespect;
+    s.perHit = perHit(s.regularRespect, s.hits - s.bonusHits);
+  }
   return out;
+}
+
+/** Every bonus hit in the given reports, in chain order: [{ chainId, chain, attackerId, respect }]. */
+export function bonusList(reports) {
+  return [...reports].sort((a, b) => a.start - b.start)
+    .flatMap((r) => (r.bonuses ?? []).map((b) => ({ chainId: r.id, chain: b.chain, attackerId: b.attacker_id, respect: b.respect ?? 0 }))
+      .sort((a, b) => a.chain - b.chain));
 }
 
 /**
@@ -153,7 +172,7 @@ export function memberTotals(reports) {
  */
 export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, allHits = null, broken = false, comp = COMPETITION }) {
   const factor = broken ? 0.5 : 1;
-  const blank = { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0, regularRespect: 0 };
+  const blank = { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0, regularRespect: 0, perHit: null };
   const memberRow = (id, team) => {
     const t = totals.get(id) ?? blank;
     return { id, name: names.get(id) ?? allHits?.get(id)?.name ?? `#${id}`, team, ...t, qualified: t.hits >= comp.qualify,
@@ -296,22 +315,28 @@ export async function syncFactionAttacks(db, client, player, { comp = COMPETITIO
 }
 
 /**
- * Every member's hits in the week: Map(id -> { id, name, hits, chainHits, respect, attacks, lastHit }).
- * A hit is an attack the member won; `attacks` also counts losses, assists and the rest.
+ * Every member's hits in the week: Map(id -> { id, name, hits, chainHits, respect, bonusHits, bonusRespect,
+ * regularRespect, perHit, attacks, lastHit }). A hit is an attack the member won; `attacks` also counts
+ * losses, assists and the rest. A hit at a bonus chain position (10, 25, 50…) is a bonus hit.
  */
 export function weekHits(attacks, comp = COMPETITION) {
   const out = new Map();
   for (const a of attacks) {
     if (!a.attacker || a.started < comp.start || a.started >= comp.end) continue;
-    const t = out.get(a.attacker.id) ?? { id: a.attacker.id, name: a.attacker.name, hits: 0, chainHits: 0, respect: 0, attacks: 0, lastHit: null };
+    const t = out.get(a.attacker.id) ?? { id: a.attacker.id, name: a.attacker.name, hits: 0, chainHits: 0, respect: 0, bonusHits: 0, bonusRespect: 0, attacks: 0, lastHit: null };
     t.attacks++;
     if (HIT_RESULTS.has(a.result)) {
       t.hits++;
       if (a.chain > 0) t.chainHits++;
       t.respect += a.respect;
+      if (BONUS_HITS.has(a.chain)) { t.bonusHits++; t.bonusRespect += a.respect; }
       t.lastHit = Math.max(t.lastHit ?? 0, a.started);
     }
     out.set(a.attacker.id, t);
+  }
+  for (const t of out.values()) {
+    t.regularRespect = t.respect - t.bonusRespect;
+    t.perHit = perHit(t.regularRespect, t.hits - t.bonusHits);
   }
   return out;
 }

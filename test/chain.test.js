@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
 import {
   COMPETITION, matchTeams, reportTotals, chainState, memberTotals, standings, syncChain,
-  syncFactionAttacks, weekHits, trimFactionAttack,
+  syncFactionAttacks, weekHits, trimFactionAttack, bonusList,
 } from '../js/chain.js';
 
 const START = COMPETITION.start;
@@ -156,7 +156,8 @@ test('weekHits counts wins in and out of chains inside the week only', () => {
     { ...fAttack(7, START + 50, 3, 'Attacked'), attacker: null }, // stealthed: no attacker to credit
   ].map(trimFactionAttack);
   const w = weekHits(attacks);
-  assert.deepEqual({ ...w.get(1), lastHit: undefined }, { id: 1, name: 'M1', hits: 2, chainHits: 1, respect: 3.5, attacks: 3, lastHit: undefined });
+  const m1 = w.get(1);
+  assert.deepEqual([m1.name, m1.hits, m1.chainHits, m1.respect, m1.attacks, m1.bonusHits, m1.perHit], ['M1', 2, 1, 3.5, 3, 0, 1.75]);
   assert.equal(w.get(1).lastHit, START + 20);
   assert.equal(w.get(2).hits, 1);
   assert.equal(w.size, 2);
@@ -186,4 +187,28 @@ test('matchTeams matches members given with a Torn id by id, whatever their name
   const { assigned, unmatched } = matchTeams(members, teams);
   assert.deepEqual([...assigned].sort(), [[2238049, 'u'], [4505292, 'u']]);
   assert.deepEqual(unmatched.map((u) => u.name), ['Gone']); // id not in the faction: falls back to the name, which no one has
+});
+
+test('respect per hit leaves out bonus hits and their respect', () => {
+  const r = report(2, START, 0, 30, [attacker(1, { leave: 11, respect: 40 })], [{ attacker_id: 1, defender_id: 5, chain: 10, respect: 10 }]);
+  const t = memberTotals([r]).get(1);
+  assert.equal(t.regularRespect, 30);
+  assert.equal(t.perHit, 3); // 30 respect over the 10 hits that weren't the bonus hit
+  assert.equal(memberTotals([report(3, START, 0, 0, [attacker(2)])]).get(2).perHit, null);
+});
+
+test('bonusList lists bonus hits in chain order across chains', () => {
+  const a = report(1, START, START + 100, 30, [], [{ attacker_id: 2, chain: 25, respect: 20 }, { attacker_id: 1, chain: 10, respect: 10 }]);
+  const b = report(2, START + 200, 0, 12, [], [{ attacker_id: 3, chain: 10, respect: 10 }]);
+  assert.deepEqual(bonusList([b, a]).map((x) => [x.chainId, x.chain, x.attackerId, x.respect]), [[1, 10, 1, 10], [1, 25, 2, 20], [2, 10, 3, 10]]);
+});
+
+test('weekHits splits bonus hits out of respect per hit', () => {
+  const attacks = [
+    fAttack(1, START + 10, 1, 'Attacked', 9, 3),
+    fAttack(2, START + 20, 1, 'Attacked', 10, 10), // bonus hit
+    fAttack(3, START + 30, 1, 'Attacked', 11, 5),
+  ].map(trimFactionAttack);
+  const t = weekHits(attacks).get(1);
+  assert.deepEqual([t.hits, t.bonusHits, t.bonusRespect, t.regularRespect, t.perHit], [3, 1, 10, 8, 4]);
 });

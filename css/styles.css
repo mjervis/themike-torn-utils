@@ -242,7 +242,7 @@ a.button:hover { background: var(--accent); }
 .ch-count { font-size: 26px; font-weight: 700; }
 .ch-meter { height: 10px; margin: 8px 0; }
 .team-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--team); margin-right: 6px; }
-.ch-teams { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+.ch-teams { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 12px; margin: 14px 0; }
 .ch-team { background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--team); border-radius: var(--radius); padding: 10px 12px; }
 .ch-team header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .ch-team h3 { margin: 0 0 6px; font-size: 15px; color: var(--team); }
