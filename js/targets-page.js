@@ -1,7 +1,7 @@
 import {
   syncAttacks, savedAttacks, beatenTargets, targetStatus, compareTargets, trimProfile, savedStatuses, saveStatuses, mugTotals,
 } from './targets.js';
-import { syncLogs, savedLogs, backfillOlder } from './sync.js';
+import { syncLogs, savedLogs, backfillOlder, historyCoverage } from './sync.js';
 
 // A status checked this recently isn't asked for again by "Check statuses".
 const FRESH_SECS = 60;
@@ -69,9 +69,11 @@ export function createTargetsPage(ctx) {
       const synced = await syncAttacks(db, client, player, { maxPages: ctx.logPages(), onProgress: status });
       await ctx.logTypes();
       const mugIds = ctx.mugLogIds();
+      if (mugIds.length) status('Reading your mug logs…');
       const mugLogs = mugIds.length ? (await syncLogs(db, client, player, mugIds, { maxPages: ctx.logPages(), onProgress: status })).logs : [];
       const statuses = data.player === player ? data.statuses : await savedStatuses(db, player);
-      Object.assign(data, { loaded: true, live: true, db, player, statuses, mugLogs, ...pick(synced) });
+      const mugCoverage = await historyCoverage(db, player, mugIds);
+      Object.assign(data, { loaded: true, live: true, db, player, statuses, mugLogs, mugCoverage, ...pick(synced) });
       $('#tg-results').hidden = false;
       render();
     } catch (err) {
@@ -88,9 +90,12 @@ export function createTargetsPage(ctx) {
   /** Show what's saved in this browser without a key or API calls. Returns when it's from, or null. */
   async function restoreSaved({ db, player }) {
     if (data.loaded) return null;
-    const [saved, statuses, mugLogs] = await Promise.all([savedAttacks(db, player), savedStatuses(db, player), savedLogs(db, player, ctx.mugLogIds())]);
+    const mugIds = ctx.mugLogIds();
+    const [saved, statuses, mugLogs, mugCoverage] = await Promise.all([
+      savedAttacks(db, player), savedStatuses(db, player), savedLogs(db, player, mugIds), historyCoverage(db, player, mugIds),
+    ]);
     if (!saved?.attacks.length || data.loaded) return null;
-    Object.assign(data, { loaded: true, db, player, statuses, mugLogs, ...pick(saved) });
+    Object.assign(data, { loaded: true, db, player, statuses, mugLogs, mugCoverage, ...pick(saved) });
     $('#tg-results').hidden = false;
     render();
     return saved.at;
@@ -104,7 +109,10 @@ export function createTargetsPage(ctx) {
       const before = client.calls;
       const synced = await syncAttacks(data.db, client, data.player, { maxPages: ctx.logPages(), older: true, onProgress: status });
       const mugIds = ctx.mugLogIds();
-      if (mugIds.length) data.mugLogs = (await backfillOlder(data.db, client, data.player, mugIds, { maxPages: ctx.logPages(), onProgress: status })).logs;
+      if (mugIds.length) {
+        data.mugLogs = (await backfillOlder(data.db, client, data.player, mugIds, { maxPages: ctx.logPages(), onProgress: status })).logs;
+        data.mugCoverage = await historyCoverage(data.db, data.player, mugIds);
+      }
       Object.assign(data, pick(synced));
       status(`Added ${synced.added} older attacks${synced.complete ? ' — that\'s your full history' : ''} (${client.calls - before} API calls).`);
       render();
@@ -161,6 +169,7 @@ export function createTargetsPage(ctx) {
   const tct = (t) => new Date(t * 1000).toLocaleString('en-GB', {
     timeZone: 'UTC', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   });
+  const day = (t) => new Date(t * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
   const n0 = (n) => (n == null || !Number.isFinite(n) ? '—' : num.format(Math.round(n)));
   /** "3h 20m", "12m 05s" */
   function span(secs) {
@@ -222,18 +231,24 @@ export function createTargetsPage(ctx) {
         <div class="sub">${n0(count('jail'))} in jail</div></div>
       <div class="card"><div class="label">Away</div><div class="value">${n0(count('abroad') + count('traveling'))}</div>
         <div class="sub">${n0(count('abroad'))} abroad · ${n0(count('traveling'))} flying</div></div>
-      <div class="card"><div class="label">Mugged</div><div class="value">${money(mugs.total)}</div>
+      <div class="card"><div class="label">Mugged</div><div class="value">${mugsRead() ? money(mugs.total) : '—'}</div>
         <div class="sub">${mugSub(mugs)}</div></div>`;
 
     $('#tg-table tbody').innerHTML = rows.map((r) => row(r, now)).join('')
       || `<tr><td colspan="11" class="muted">${all.length ? 'No targets match these filters — statuses and last active only show once a target has been checked.' : 'No wins in your saved attacks yet.'}</td></tr>`;
   }
 
+  // Mug logs are read on the first load with a key after mug tracking was added; until then there's nothing to add up.
+  const mugsRead = () => ctx.mugLogIds().length > 0 && data.mugCoverage?.newest != null;
+
   function mugSub(mugs) {
     if (!ctx.mugLogIds().length) return 'pick mug log types in Settings';
-    if (!mugs.count) return 'no mugs in this range';
+    if (!mugsRead()) return data.live ? 'mug logs not read' : 'mug logs not read yet — load with your key';
+    const cov = data.mugCoverage;
+    const since = cov.complete ? '' : ` · logs back to ${day(cov.oldest)}`;
+    if (!mugs.count) return `no mugs in this range${since}`;
     const biggest = Math.max(...[...mugs.byTarget.values()].map((t) => t.biggest), 0);
-    return `${n0(mugs.count)} mug${mugs.count === 1 ? '' : 's'}${biggest ? ` · biggest ${money(biggest)}` : ''}${mugs.unmatched ? ` · ${n0(mugs.unmatched)} not matched to a player` : ''}`;
+    return `${n0(mugs.count)} mug${mugs.count === 1 ? '' : 's'}${biggest ? ` · biggest ${money(biggest)}` : ''}${mugs.unmatched ? ` · ${n0(mugs.unmatched)} not matched to a player` : ''}${since}`;
   }
 
   const SORTS = {
