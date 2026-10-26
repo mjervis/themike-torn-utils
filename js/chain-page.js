@@ -16,7 +16,8 @@ export function createChainPage(ctx) {
   const { $, store, status, esc, money, num } = ctx;
   const comp = COMPETITION;
   const teams = DEFAULT_TEAMS;
-  // `attacks` is the faction attack log for the week, or null if this key can't read it.
+  // `attacks` is the faction attack log for the week, or null if this key can't read it;
+  // `noAttackLog` is the client whose key couldn't, or false.
   const data = { loaded: false, live: false, saved: null, attacks: null, noAttackLog: false };
   // Member id -> team id ('' for no team), where someone has changed the announced line-up on this device.
   let overrides = store.get('chainTeams', {});
@@ -57,13 +58,15 @@ export function createChainPage(ctx) {
       const first = !data.live || data.player !== player;
       const saved = await syncChain(db, client, player, { comp, members: first, listChains: first, onProgress: quiet ? null : status });
       // Every hit in the week needs faction API access; without it the page shows chain hits only.
-      if (first || !data.noAttackLog) {
+      // A key that couldn't read it isn't asked again; a different key is.
+      if (first || data.noAttackLog !== client) {
         try {
           data.attacks = (await syncFactionAttacks(db, client, player, { comp, onProgress: quiet ? null : status })).attacks;
           data.noAttackLog = false;
         } catch (err) {
           if (err.fatal || ![7, 16].includes(err.code)) throw err;
-          data.noAttackLog = true;
+          data.noAttackLog = client;
+          data.attacks = null; // don't show attacks saved from a key that could read them
         }
       }
       Object.assign(data, { loaded: true, live: true, db, player, saved });
@@ -155,6 +158,12 @@ export function createChainPage(ctx) {
     const live = data.saved.live;
     const halved = state.broken && !state.reached;
 
+    // Without the faction attack log the scores still cover every chain, but not hits made outside one.
+    $('#ch-notice').hidden = !data.noAttackLog;
+    $('#ch-notice').textContent = 'Your key can\'t read the faction attack log, so these scores come from Torn\'s chain reports only. '
+      + 'They include every chain since the start, but some hits may be missed — any made while no chain was counting, such as during the cooldown after a break. '
+      + 'A key whose owner has faction API access (Limited, or custom with faction → attacks) shows every hit.';
+    $('#ch-all-th').hidden = !allHits;
     $('#ch-asof').textContent = `Updated ${tct(data.saved.at)} TCT${data.live ? '' : ' (saved)'}`;
     $('#ch-banner').innerHTML = banner(state, live, now, halved);
 
@@ -176,7 +185,7 @@ export function createChainPage(ctx) {
       <td><span class="team-dot"></span>${esc(t.name)}</td>
       <td class="num">${n0(t.size)}</td>
       <td class="num">${n0(t.hits)}</td>
-      <td class="num">${n0(t.allHits)}</td>
+      ${allHits ? `<td class="num">${n0(t.allHits)}</td>` : ''}
       <td class="num"><strong>${r2(t.score)}</strong></td>
       <td class="num">${n0(t.qualified)} / ${n0(t.size)}</td>
       <td class="num">${shortMoney(t.prizeEach)}</td>
@@ -243,12 +252,9 @@ export function createChainPage(ctx) {
 
   /** Every member's hits in the week from the faction attack log, team or not. */
   function renderWeek(allHits, line) {
-    $('#ch-week').hidden = !allHits && !data.noAttackLog;
-    if (!allHits) {
-      $('#ch-week-body').innerHTML = data.noAttackLog
-        ? '<p class="muted">Counting every hit, not just chain hits, needs a key whose owner has faction API access (and Limited access, or a custom key with faction → attacks).</p>' : '';
-      return;
-    }
+    // Without the attack log the warning at the top says why this is missing.
+    $('#ch-week').hidden = !allHits;
+    if (!allHits) return;
     const rows = [...allHits.values()].sort((a, b) => b.hits - a.hits || b.respect - a.respect);
     const names = new Map(line.members.map((m) => [m.id, m.name]));
     $('#ch-week-body').innerHTML = `<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Member</th><th>Team</th>
