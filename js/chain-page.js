@@ -1,6 +1,6 @@
 import {
   COMPETITION, DEFAULT_TEAMS, matchTeams, chainState, memberTotals, standings, syncChain, savedChain,
-  syncFactionAttacks, savedFactionAttacks, weekHits,
+  syncFactionAttacks, savedFactionAttacks, weekHits, bonusList,
 } from './chain.js';
 
 // The chain report and live chain are re-read this often while the page is open (2 calls each time).
@@ -111,11 +111,23 @@ export function createChainPage(ctx) {
     const reports = Object.values(s.reports ?? {});
     const state = chainState(reports, s.live, comp);
     const counted = new Set(state.chains.map((c) => c.id));
-    const totals = memberTotals(reports.filter((r) => counted.has(r.id)));
+    const countedReports = reports.filter((r) => counted.has(r.id));
+    const totals = memberTotals(countedReports);
     const line = lineUp();
     const names = new Map(line.members.map((m) => [m.id, m.name]));
     const allHits = data.attacks ? weekHits(data.attacks, comp) : null;
-    return { state, line, allHits, table: standings({ teams, assignment: line.assignment, names, totals, allHits, broken: state.broken && !state.reached, comp }) };
+    return { state, line, allHits, bonuses: bonusesWithTimes(countedReports), table: standings({ teams, assignment: line.assignment, names, totals, allHits, broken: state.broken && !state.reached, comp }) };
+  }
+
+  /** Bonus hits from the chain reports, with when each was made where the attack log has it. */
+  function bonusesWithTimes(reports) {
+    const byId = new Map(reports.map((r) => [r.id, r]));
+    return bonusList(reports).map((b) => {
+      const r = byId.get(b.chainId);
+      const hit = data.attacks?.find((a) => a.attacker?.id === b.attackerId && a.chain === b.chain
+        && a.started >= r.start - 60 && (!r.end || a.started <= r.end));
+      return { ...b, at: hit?.started ?? null };
+    });
   }
 
   // ---------- rendering ----------
@@ -139,7 +151,7 @@ export function createChainPage(ctx) {
   function render() {
     if (!data.loaded) return;
     const now = Math.floor(Date.now() / 1000);
-    const { state, line, allHits, table } = compute();
+    const { state, line, allHits, bonuses, table } = compute();
     const live = data.saved.live;
     const halved = state.broken && !state.reached;
 
@@ -174,11 +186,12 @@ export function createChainPage(ctx) {
     $('#ch-teams').innerHTML = table.teams.map((t) => teamCard(t, !!allHits)).join('');
     renderWeek(allHits, line);
     $('#ch-prizes').innerHTML = prizes(table);
+    renderBonuses(bonuses, line);
     $('#ch-others').innerHTML = table.others.length ? `
       <h2 class="section-title">Hitting, but not on a team</h2>
       <p class="muted">These members have chain hits but aren't on a team here. If they should be, put them on one under Teams below.</p>
       <div class="table-wrap"><table><thead><tr><th>Member</th><th class="num">Hits</th><th class="num">Respect</th></tr></thead>
-      <tbody>${table.others.map((m) => `<tr><td>${playerLink(m)}</td><td class="num">${n0(m.hits)}</td><td class="num">${r2(m.regularRespect)}</td></tr>`).join('')}</tbody></table></div>` : '';
+      <tbody>${table.others.map((m) => `<tr><td>${playerLink(m)}</td><td class="num">${n0(m.hits)}</td><td class="num">${r2(m.regularRespect)}${respectNote(m)}</td></tr>`).join('')}</tbody></table></div>` : '';
     renderSetup(line);
   }
 
@@ -206,10 +219,16 @@ export function createChainPage(ctx) {
 
   const placeLabel = (p) => ['1st', '2nd', '3rd', '4th'][p - 1] ?? `${p}th`;
 
+  /** "2.45 a hit · +30 bonus" under a member's name. */
+  function respectNote(m) {
+    const parts = [m.perHit == null ? null : `${r2(m.perHit)} a hit`, m.bonusRespect ? `+${n0(m.bonusRespect)} bonus` : null].filter(Boolean);
+    return parts.length ? `<div class="muted small">${parts.join(' · ')}</div>` : '';
+  }
+
   function teamCard(t, withAll) {
     const rows = t.members.map((m, i) => `<tr>
       <td class="num muted">${i + 1}</td>
-      <td>${playerLink(m)}</td>
+      <td>${playerLink(m)}${respectNote(m)}</td>
       <td class="num"><strong>${n0(m.hits)}</strong></td>
       ${withAll ? `<td class="num">${n0(m.allHits)}</td>` : ''}
       <td class="num">${r2(m.regularRespect)}</td>
@@ -233,7 +252,7 @@ export function createChainPage(ctx) {
     const rows = [...allHits.values()].sort((a, b) => b.hits - a.hits || b.respect - a.respect);
     const names = new Map(line.members.map((m) => [m.id, m.name]));
     $('#ch-week-body').innerHTML = `<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Member</th><th>Team</th>
-      <th class="num">Hits</th><th class="num">In a chain</th><th class="num">Outside</th><th class="num">Respect</th><th class="num">Attacks</th><th>Last hit (TCT)</th></tr></thead>
+      <th class="num">Hits</th><th class="num">In a chain</th><th class="num">Outside</th><th class="num" title="Leaving out bonus hits">Respect</th><th class="num" title="Respect per hit, leaving out bonus hits">Per hit</th><th class="num">Bonus</th><th class="num">Attacks</th><th>Last hit (TCT)</th></tr></thead>
       <tbody>${rows.map((m, i) => `<tr class="${line.assignment.has(m.id) ? `team-${line.assignment.get(m.id)}` : ''}">
         <td class="num muted">${i + 1}</td>
         <td>${playerLink({ id: m.id, name: names.get(m.id) ?? m.name })}</td>
@@ -241,10 +260,30 @@ export function createChainPage(ctx) {
         <td class="num"><strong>${n0(m.hits)}</strong></td>
         <td class="num">${n0(m.chainHits)}</td>
         <td class="num">${n0(m.hits - m.chainHits)}</td>
-        <td class="num">${r2(m.respect)}</td>
+        <td class="num">${r2(m.regularRespect)}</td>
+        <td class="num">${r2(m.perHit)}</td>
+        <td class="num">${m.bonusHits ? `${n0(m.bonusRespect)} <span class="muted small">(${n0(m.bonusHits)})</span>` : '—'}</td>
         <td class="num muted">${n0(m.attacks)}</td>
         <td>${m.lastHit ? tct(m.lastHit) : '—'}</td>
-      </tr>`).join('') || '<tr><td colspan="9" class="muted">No attacks yet.</td></tr>'}</tbody></table></div>`;
+      </tr>`).join('') || '<tr><td colspan="11" class="muted">No attacks yet.</td></tr>'}</tbody></table></div>`;
+  }
+
+  /** Every bonus hit (10, 25, 50…) in the counted chains: who made it and the bonus respect. */
+  function renderBonuses(bonuses, line) {
+    $('#ch-bonus').hidden = !bonuses.length;
+    if (!bonuses.length) return;
+    const names = new Map(line.members.map((m) => [m.id, m.name]));
+    const chains = new Set(bonuses.map((b) => b.chainId)).size;
+    $('#ch-bonus tbody').innerHTML = bonuses.map((b) => {
+      const team = line.assignment.get(b.attackerId);
+      return `<tr class="${team ? `team-${team}` : ''}">
+        <td class="num"><strong>${n0(b.chain)}</strong>${chains > 1 ? `<div class="muted small">chain ${esc(b.chainId)}</div>` : ''}</td>
+        <td>${playerLink({ id: b.attackerId, name: names.get(b.attackerId) ?? `#${b.attackerId}` })}</td>
+        <td>${team ? `<span class="team-dot"></span>${esc(teamName(team))}` : '<span class="muted">—</span>'}</td>
+        <td class="num">${n0(b.respect)}</td>
+        <td>${b.at ? tct(b.at) : '—'}</td>
+      </tr>`;
+    }).join('');
   }
 
   function prizes(table) {
