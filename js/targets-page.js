@@ -256,6 +256,9 @@ export function createTargetsPage(ctx) {
     mugged: (a, b) => (b.mugged?.money ?? 0) - (a.mugged?.money ?? 0) || compareTargets(a, b),
     lastWin: (a, b) => (b.lastWin ?? 0) - (a.lastWin ?? 0),
     level: (a, b) => (b.level ?? 0) - (a.level ?? 0) || compareTargets(a, b),
+    // Both from your last win on them, so they reflect the target's current stats against yours.
+    respect: (a, b) => (b.respect ?? 0) - (a.respect ?? 0) || compareTargets(a, b),
+    ff: (a, b) => (b.ff ?? 0) - (a.ff ?? 0) || compareTargets(a, b),
   };
 
   const KIND_TAG = { okay: 'found', hospital: 'warn', jail: 'warn', federal: 'warn', abroad: '', traveling: '', gone: '' };
