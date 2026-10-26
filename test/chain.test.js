@@ -179,3 +179,11 @@ test('syncFactionAttacks reads the week once, then only newer attacks, and nothi
   assert.deepEqual(asks[1], { from: START + 100 - 300, to: COMPETITION.end });
   assert.equal(saved.attacks.length, 1);
 });
+
+test('matchTeams matches members given with a Torn id by id, whatever their name', () => {
+  const members = [{ id: 2238049, name: 'DontTrip' }, { id: 4505292, name: 'THEMikeUK' }, { id: 77, name: 'THEMikeUK2' }];
+  const teams = [{ id: 'u', members: [{ name: 'Mike', id: 4505292 }, { name: 'DontTrip', id: 2238049 }, { name: 'Gone', id: 1 }] }];
+  const { assigned, unmatched } = matchTeams(members, teams);
+  assert.deepEqual([...assigned].sort(), [[2238049, 'u'], [4505292, 'u']]);
+  assert.deepEqual(unmatched.map((u) => u.name), ['Gone']); // id not in the faction: falls back to the name, which no one has
+});

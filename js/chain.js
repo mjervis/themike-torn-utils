@@ -21,19 +21,23 @@ export const COMPETITION = {
   mvp: { name: 'Pumpkin King / Queen', prize: 50e6 }, // leadership-voted, not computed
 };
 
-/** Teams as announced. Names are matched to faction members loosely; Settings on the page fixes the rest. */
+/**
+ * Teams as announced. A member given as { name, id } is matched by Torn id; plain names are matched to
+ * faction members loosely, and Teams on the page fixes the rest.
+ */
 export const DEFAULT_TEAMS = [
   { id: 'vampires', name: 'Vampires', members: ['NR94', 'Adarnaz', 'Ishka', 'Oghmatic', 'BigDaddyJayz', 'Ghostface'] },
   { id: 'reapers', name: 'Reapers', members: ['VMR', 'Ward', 'Falkor', 'Branden', 'RatherAngry', 'Blokka', 'Lil Dixie'] },
   { id: 'demons', name: 'Demons', members: ['Gabe', 'Mugui', 'SneakKeith', 'BorocSiluix', 'Minovate', 'Nonside', 'NPallacR'] },
-  { id: 'undead', name: 'Undead', members: ['Drajd', 'Razeil', 'Wolf', 'DontTripp', 'Mike', 'RoadZomBeast'] },
+  { id: 'undead', name: 'Undead', members: ['Drajd', 'Razeil', 'Wolf',
+    { name: 'DontTrip', id: 2238049 }, { name: 'THEMikeUK', id: 4505292 }, { name: 'RoadZumBeast', id: 4575668 }] },
 ];
 
 const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /**
  * Match the announced team names to faction members: { assigned: Map(memberId -> teamId), unmatched: [{ team, name }] }.
- * An exact match (ignoring case, spaces and punctuation) wins; otherwise a member whose name starts with
+ * A member with a Torn id is matched by it; otherwise an exact match (ignoring case, spaces and punctuation) wins; otherwise a member whose name starts with
  * or contains the announced name, but only if exactly one member does.
  */
 export function matchTeams(members, teams = DEFAULT_TEAMS) {
@@ -41,8 +45,17 @@ export function matchTeams(members, teams = DEFAULT_TEAMS) {
   const unmatched = [];
   const pending = [];
   const byNorm = new Map(members.map((m) => [norm(m.name), m]));
+  const byId = new Map(members.map((m) => [m.id, m]));
+  // Ids first, so a loose name match can't take someone already named by id.
   for (const team of teams) {
-    for (const name of team.members) {
+    for (const entry of team.members) {
+      if (entry.id && byId.has(entry.id)) assigned.set(entry.id, team.id);
+    }
+  }
+  for (const team of teams) {
+    for (const entry of team.members) {
+      if (entry.id && byId.has(entry.id)) continue;
+      const name = entry.name ?? entry;
       const exact = byNorm.get(norm(name));
       if (exact && !assigned.has(exact.id)) assigned.set(exact.id, team.id);
       else pending.push({ team: team.id, name });
