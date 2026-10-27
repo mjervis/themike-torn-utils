@@ -31,6 +31,19 @@ test('costBasis "recent" uses the newest lots that cover the held quantity', () 
   assert.equal(b.unitCost, (2 * 400 + 2 * 100) / 4);
 });
 
+test('costBasis can skip the newest units already costed elsewhere', () => {
+  const lots = lotsByItem([
+    log('old', 100, { item: 1, quantity: 10, cost_each: 100 }),
+    log('new', 200, { item: 1, quantity: 2, cost_each: 400 }),
+  ]).get(1);
+  // 3 in the inventory take both $400s and one $100; the 2 listed in the bazaar are $100s.
+  const b = costBasis(lots, 2, 'recent', 3);
+  assert.equal(b.unitCost, 100);
+  assert.equal(b.coveredQty, 2);
+  assert.equal(costBasis(lots, 5, 'recent', 10).coveredQty, 2);
+  assert.equal(costBasis(lots, 5, 'recent', 12), null);
+});
+
 test('costBasis reports partial coverage and supports averaging', () => {
   const lots = lotsByItem([log('x', 1, { item: 1, quantity: 2, cost_each: 300 })]).get(1);
   assert.equal(costBasis(lots, 5).coveredQty, 2);

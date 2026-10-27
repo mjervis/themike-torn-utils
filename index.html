@@ -121,7 +121,29 @@
         </div>
         <p class="footnote">Realised profit matches each sale against your oldest purchases and finds first, using sale proceeds after fees.
           Units sold with no purchase on record (e.g. bought before your saved log history) aren't counted in realised profit — “Read older log history” on the Settings tab can fill the gap.
-          Unrealised profit is what you hold now, valued with the Sell via choice above. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.</p>
+          Unrealised profit is what you hold now, valued with the Sell via choice above, plus your bazaar at the prices you listed. Trades and gifts aren't in Torn's buy/sell logs, so they aren't counted.</p>
+
+        <h2 class="section-title">In your bazaar <span class="muted small" id="bazaar-asof"></span></h2>
+        <div class="table-wrap">
+          <table id="bazaar-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">Qty</th>
+                <th class="num">Listed at</th>
+                <th class="num">Market value</th>
+                <th class="num">vs market</th>
+                <th class="num">Paid / unit</th>
+                <th class="num">Profit each</th>
+                <th class="num">Listed value</th>
+                <th class="num">Profit</th>
+                <th class="num">ROI</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="footnote">Profit is the listed price less what you paid — bazaar sales carry no fee. Listings are costed from the purchases left once your inventory has taken its share (with “Most recent” cost basis, the inventory gets the newest buys), so no unit is counted twice. A cost typed in on Holdings applies here too.</p>
       </div>
 
       <div id="history-view" hidden>
@@ -445,13 +467,13 @@
                   <td>Nobody</td>
                   <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, where players you've beaten are now, and your faction's chain competition standings.</td>
                   <td>Stored locally only if you tick “Remember” / Not shared</td>
-                  <td>Custom: <code>user</code> → basic, inventory, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>faction</code> → members, chain, chains, chainreport, attacks (needs faction API access); <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
+                  <td>Custom: <code>user</code> → basic, inventory, bazaar, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>faction</code> → members, chain, chains, chainreport, attacks (needs faction API access); <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p><strong>Recommended:</strong>
-            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;faction=members,chain,chains,chainreport,attacks&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,bazaar,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;faction=members,chain,chains,chainreport,attacks&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
             with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
             You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
         </details>

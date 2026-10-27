@@ -5,7 +5,7 @@ import {
 } from './costing.js';
 import { openDb, STORES, meta } from './db.js';
 import {
-  keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory,
+  keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory, loadBazaar,
   syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor, savedLogs,
 } from './sync.js';
 import {
@@ -50,6 +50,9 @@ const state = {
   catalog: new Map(),      // itemId -> TornItem
   logTypes: [],            // [{id, title}]
   holdings: [],            // [{id, name, qty, equipped}]
+  bazaar: [],              // [{id, name, qty, price}] listed in your bazaar (not in the inventory)
+  bazaarAt: null,
+  bazaarError: null,       // why the bazaar couldn't be read (e.g. the key lacks the selection)
   lots: new Map(),         // itemId -> purchase lots
   rawLogs: new Map(),      // logId -> log
   lowest: store.get('lowest', {}),        // itemId -> { price, at }
@@ -211,6 +214,18 @@ async function load({ force = settings.read().bypassCache } = {}) {
     state.pricesAt = catalog.at;
     state.holdings = aggregate(inv.value.items);
 
+    status('Loading bazaar…');
+    try {
+      const baz = await loadBazaar(state.db, state.client, state.player.id, { force });
+      state.bazaar = baz.value;
+      state.bazaarAt = baz.at;
+      state.bazaarError = null;
+    } catch (err) {
+      if (err.fatal) throw err;
+      // Not worth failing the whole load: the rest of the page still works without it.
+      state.bazaarError = err.code === 16 ? 'Your key needs the user → bazaar selection to show your bazaar.' : err.message;
+    }
+
     const s = settings.read();
     if (!s.selectedLogs.length) throw new Error('No purchase log types selected in Settings.');
     state.findTypeIds = new Set(s.selectedFinds);
@@ -257,8 +272,9 @@ async function hydrate() {
   const last = store.get('player', null);
   if (!last) return {};
   await dbReady;
-  const [catalog, logTypes, inv] = await Promise.all([
+  const [catalog, logTypes, inv, baz] = await Promise.all([
     meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
+    meta.get(state.db, `cache:bazaar:${last.id}`),
   ]);
   if (state.live) return {}; // a load finished meanwhile
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
@@ -276,6 +292,7 @@ async function hydrate() {
   if (inv) {
     state.inventoryAt = inv.at;
     state.holdings = aggregate(inv.value.items);
+    if (baz) { state.bazaar = baz.value; state.bazaarAt = baz.at; }
     const s = settings.read();
     state.findTypeIds = new Set(s.selectedFinds);
     const logs = await savedLogs(state.db, last.id, ledgerLogIds(s));
@@ -441,6 +458,40 @@ function buildRows() {
       partial: !override && basis && basis.coveredQty < h.qty,
       foundQty: override == null ? (basis?.lots ?? []).filter((l) => l.kind === 'find').reduce((t, l) => t + (l.used ?? l.qty), 0) : 0,
       ...p,
+    };
+  });
+}
+
+/**
+ * Your bazaar listings, costed from the purchases left after the inventory's share (so a unit is
+ * never counted in both), and valued at the listed price: bazaar sales carry no fee.
+ */
+function bazaarRows(s = settings.read()) {
+  const rules = { tradeTypes: s.tradeTypes, itemOverrides: state.itemGroups };
+  const inInventory = new Map(state.holdings.map((h) => [h.id, h.qty]));
+  const byItem = new Map();
+  for (const b of state.bazaar) {
+    const row = byItem.get(b.id) ?? { id: b.id, name: b.name, qty: 0, listed: 0 };
+    row.qty += b.qty;
+    row.listed += b.qty * (b.price ?? 0);
+    byItem.set(b.id, row);
+  }
+  return [...byItem.values()].map((b) => {
+    const item = state.catalog.get(b.id);
+    const basis = costBasis(state.lots.get(b.id), b.qty, s.costMethod, inInventory.get(b.id) ?? 0);
+    const override = state.overrides[b.id];
+    const unitCost = override ?? basis?.unitCost ?? null;
+    const price = b.listed ? b.listed / b.qty : null;
+    const market = item?.value?.market_price || null;
+    const p = profit({ qty: b.qty, unitCost, unitPrice: price, fee: 0 });
+    return {
+      ...b, ...p,
+      name: item?.name ?? b.name ?? `Item ${b.id}`, image: item?.image,
+      group: classify(item?.type, b.id, rules).group,
+      price, market, vsMarket: price && market ? price / market - 1 : null,
+      unitCost, override, unitProfit: unitCost == null || price == null ? null : price - unitCost,
+      partial: override == null && basis && basis.coveredQty < b.qty, basis,
+      foundQty: override == null ? (basis?.lots ?? []).filter((l) => l.kind === 'find').reduce((t, l) => t + (l.used ?? l.qty), 0) : 0,
     };
   });
 }
@@ -789,17 +840,22 @@ function renderTrading() {
   const ledger = ledgerFor([...state.rawLogs.values()], s);
   const summary = tradeSummary(ledger, { from, include });
 
-  // What you still hold, valued with the chosen sale route (always "now", whatever the range).
+  // What you still hold, valued with the chosen sale route (always "now", whatever the range),
+  // plus what's in your bazaar at the price you listed it for.
   const held = new Map(buildRows().filter((r) => include(r.id)).map((r) => [r.id, r]));
+  const listed = bazaarRows(s).filter((b) => include(b.id)).sort((a, b) => (b.profit ?? -Infinity) - (a.profit ?? -Infinity));
+  const inBazaar = new Map(listed.map((b) => [b.id, b]));
   const rows = new Map(summary.map((r) => [r.itemId, { ...r }]));
   // Held items with nothing bought or sold in the range still show their unrealised profit.
   for (const h of held.values()) if (!rows.has(h.id) && h.profit != null) rows.set(h.id, { itemId: h.id });
+  for (const b of listed) if (!rows.has(b.id) && b.profit != null) rows.set(b.id, { itemId: b.id });
   const list = [...rows.entries()].map(([id, r]) => {
     const h = held.get(id);
-    const unrealised = h?.profit ?? null;
+    const b = inBazaar.get(id);
+    const unrealised = h?.profit == null && b?.profit == null ? null : (h?.profit ?? 0) + (b?.profit ?? 0);
     return {
-      ...r, id, name: state.catalog.get(id)?.name ?? h?.name ?? `Item ${id}`, image: state.catalog.get(id)?.image,
-      held: h?.qty ?? 0, unrealised, total: (r.realised ?? 0) + (unrealised ?? 0),
+      ...r, id, name: state.catalog.get(id)?.name ?? h?.name ?? b?.name ?? `Item ${id}`, image: state.catalog.get(id)?.image,
+      held: (h?.qty ?? 0) + (b?.qty ?? 0), bazaarQty: b?.qty ?? 0, unrealised, total: (r.realised ?? 0) + (unrealised ?? 0),
     };
   }).sort((a, b) => b.total - a.total);
 
@@ -810,11 +866,16 @@ function renderTrading() {
   const unknown = sum('unknownQty');
   const estFees = list.some((r) => r.feeEstimated);
   const rangeLabel = s.range === 'all' ? 'all saved history' : `last ${s.range} days`;
+  const bazaarSum = (k) => listed.reduce((t, r) => t + (r[k] ?? 0), 0);
+  const bazaarProfit = listed.some((b) => b.profit != null) ? bazaarSum('profit') : null;
   $('#trading-cards').innerHTML = `
     <div class="card"><div class="label">Bought</div><div class="value">${money(sum('spent'))}</div><div class="sub">${money0.format(sum('boughtQty'))} units · ${esc(rangeLabel)}</div></div>
     <div class="card"><div class="label">Sold (after fees)</div><div class="value">${money(sum('proceeds'))}</div><div class="sub">${money0.format(sum('soldQty'))} units · fees ${money(sum('gross') - sum('proceeds'))}${estFees ? ' (some estimated)' : ''}</div></div>
     <div class="card"><div class="label">Realised profit</div><div class="value ${signClass(realised)}">${money(realised)}</div><div class="sub">margin ${pct(costOfSold ? realised / costOfSold : null)}${unknown ? ` · ${money0.format(unknown)} sold with no cost on record` : ''}</div></div>
-    <div class="card"><div class="label">Unrealised profit</div><div class="value ${signClass(unrealised)}">${money(unrealised)}</div><div class="sub">held now · ${esc(saleRoutes(s)[s.route].label)}</div></div>
+    <div class="card"><div class="label">Unrealised profit</div><div class="value ${signClass(unrealised)}">${money(unrealised)}</div><div class="sub">held now · ${esc(saleRoutes(s)[s.route].label)}${listed.length ? ' · bazaar at listed prices' : ''}</div></div>
+    <div class="card"><div class="label">In your bazaar</div><div class="value">${listed.length ? money(bazaarSum('value')) : '—'}</div><div class="sub">${listed.length
+      ? `${money0.format(bazaarSum('qty'))} units listed · profit <span class="${signClass(bazaarProfit)}">${money(bazaarProfit)}</span> if it all sells`
+      : state.bazaarError ? esc(state.bazaarError) : 'nothing listed'}</div></div>
     <div class="card"><div class="label">Overall profit</div><div class="value ${signClass(realised + unrealised)}">${money(realised + unrealised)}</div><div class="sub">realised + unrealised · ${esc(viewLabel())}</div></div>`;
 
   const pts = realisedByDay(ledger.sales.filter((x) => (from == null || x.timestamp >= from) && include(x.itemId)));
@@ -838,11 +899,34 @@ function renderTrading() {
       <td class="num ${signClass(r.soldQty ? r.realised : null)}">${r.soldQty ? money(r.realised) : ''}</td>
       <td class="num ${signClass(r.margin)}">${r.soldQty ? pct(r.margin) : ''}</td>
       <td class="num muted" title="${r.usedQty ? `Cost ${money(r.usedCost)} — see Training cost` : ''}">${qty(r.usedQty)}</td>
-      <td class="num">${qty(r.held)}</td>
+      <td class="num">${qty(r.held)}${r.bazaarQty ? ` <span class="tag" title="${money0.format(r.bazaarQty)} of these are in your bazaar, valued at your listed price">${money0.format(r.bazaarQty)} bazaar</span>` : ''}</td>
       <td class="num ${signClass(r.unrealised)}">${money(r.unrealised)}</td>
       <td class="num ${signClass(r.total)}"><strong>${money(r.total)}</strong></td>
     </tr>`).join('') || `<tr><td colspan="13" class="muted">${ledgerLogIds(s).length && s.selectedSells.length
       ? 'No buying or selling in this range.' : 'Pick sale log types in Settings, then press Update.'}</td></tr>`;
+
+  renderBazaar(listed);
+}
+
+function renderBazaar(listed) {
+  $('#bazaar-asof').textContent = state.bazaarAt ? `as of ${date(state.bazaarAt)} (${ago(state.bazaarAt)})` : '';
+  $('#bazaar-table tbody').innerHTML = listed.map((r) => `
+    <tr>
+      <td class="name"><div class="cell">${r.image ? `<img src="${esc(r.image)}" alt="" loading="lazy">` : ''}<span>${esc(r.name)}</span>
+        ${r.foundQty ? `<span class="tag found" title="Units counted at $0 because they were found">${money0.format(r.foundQty)} found</span>` : ''}
+        ${r.partial ? `<span class="tag warn" title="Purchases found for ${r.basis.coveredQty} of ${r.qty} once the inventory's share is taken">cost from ${r.basis.coveredQty}/${r.qty}</span>` : ''}
+        ${r.override != null ? '<span class="tag warn" title="Uses the cost typed in on Holdings">manual cost</span>' : ''}</div></td>
+      <td class="num">${money0.format(r.qty)}</td>
+      <td class="num">${money(r.price)}</td>
+      <td class="num muted">${money(r.market)}</td>
+      <td class="num muted" title="Listed price against Torn market value">${r.vsMarket == null ? '—' : `${r.vsMarket > 0 ? '+' : ''}${pct(r.vsMarket)}`}</td>
+      <td class="num">${money(r.unitCost)}</td>
+      <td class="num ${signClass(r.unitProfit)}">${money(r.unitProfit)}</td>
+      <td class="num">${money(r.value)}</td>
+      <td class="num ${signClass(r.profit)}"><strong>${money(r.profit)}</strong></td>
+      <td class="num ${signClass(r.roi)}">${pct(r.roi)}</td>
+    </tr>`).join('') || `<tr><td colspan="10" class="muted">${state.bazaarError ? esc(state.bazaarError)
+      : state.bazaarAt ? 'Nothing listed in your bazaar.' : 'Press Update to read your bazaar.'}</td></tr>`;
 }
 
 // ---------- backup ----------
