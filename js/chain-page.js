@@ -1,6 +1,6 @@
 import {
-  COMPETITION, DEFAULT_TEAMS, matchTeams, chainState, memberTotals, standings, syncChain, savedChain,
-  syncFactionAttacks, savedFactionAttacks, weekHits, bonusList, raffleChain, raffleHits,
+  COMPETITION, DEFAULT_TEAMS, matchTeams, chainState, memberTotals, standings, eventBoards, syncChain, savedChain,
+  syncFactionAttacks, savedFactionAttacks, weekHits, bonusList, competitionChain, competitionTotals,
 } from './chain.js';
 
 // The chain report and live chain are re-read this often while the page is open (2 calls each time).
@@ -115,14 +115,17 @@ export function createChainPage(ctx) {
     const state = chainState(reports, s.live, comp);
     const counted = new Set(state.chains.map((c) => c.id));
     const countedReports = reports.filter((r) => counted.has(r.id));
-    const totals = memberTotals(countedReports);
     const line = lineUp();
     const names = new Map(line.members.map((m) => [m.id, m.name]));
-    const allHits = data.attacks ? weekHits(data.attacks, comp) : null;
-    const raffle = raffleHits({ chain: raffleChain(state, comp), reports: countedReports, attacks: data.attacks, capped: s.capped, comp });
+    // The competition: hits 1–2,500 of the chain that reaches 2,500, by team members only.
+    const chain = competitionChain(state, comp);
+    const scored = competitionTotals({ chain, reports: countedReports, attacks: data.attacks, capped: s.capped, comp });
+    // The event: every hit by every member, from the attack log, or every chain since the start without it.
+    const event = data.attacks ? weekHits(data.attacks, comp) : memberTotals(countedReports);
     return {
-      state, line, allHits, raffle, bonuses: bonusesWithTimes(countedReports),
-      table: standings({ teams, assignment: line.assignment, names, totals, allHits, raffleHits: raffle.hits, broken: state.broken && !state.reached, comp }),
+      state, line, chain, scored, bonuses: bonusesWithTimes(countedReports),
+      table: standings({ teams, assignment: line.assignment, names, totals: scored.totals, broken: state.broken && !state.reached, comp }),
+      boards: eventBoards({ teams, assignment: line.assignment, names, totals: event }),
     };
   }
 
@@ -139,7 +142,7 @@ export function createChainPage(ctx) {
 
   // ---------- rendering ----------
   const n0 = (n) => (n == null || !Number.isFinite(n) ? '—' : num.format(Math.round(n)));
-  const r2 = (n) => (n == null || !Number.isFinite(n) ? '—' : n.toFixed(2));
+  const r2 = (n) => (n == null || !Number.isFinite(n) ? '—' : n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   const tct = (t) => new Date(t * 1000).toLocaleString('en-GB', {
     timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   });
@@ -158,29 +161,31 @@ export function createChainPage(ctx) {
   function render() {
     if (!data.loaded) return;
     const now = Math.floor(Date.now() / 1000);
-    const { state, line, allHits, raffle, bonuses, table } = compute();
+    const { state, line, chain, scored, bonuses, table, boards } = compute();
     const live = data.saved.live;
     const halved = state.broken && !state.reached;
+    const allLog = !!data.attacks;
 
-    // Without the faction attack log the scores still cover every chain, but not hits made outside one.
+    // Without the faction attack log the competition comes from the chain report and the event boards
+    // from every chain's reports, so hits outside a chain are missed.
     $('#ch-notice').hidden = !data.noAttackLog;
     $('#ch-notice').textContent = 'Your key can\'t read the faction attack log, so these scores come from Torn\'s chain reports only. '
-      + 'They include every chain since the start, but some hits may be missed — any made while no chain was counting, such as during the cooldown after a break. '
+      + 'The event leaderboards include every chain since the start, but some hits may be missed — any made while no chain was counting, such as during the cooldown after a break. '
       + 'A key whose owner has faction API access (Limited, or custom with faction → attacks) shows every hit.';
-    $('#ch-all-th').hidden = !allHits;
     $('#ch-asof').textContent = `Updated ${tct(data.saved.at)} TCT${data.live ? '' : ' (saved)'}`;
     $('#ch-banner').innerHTML = banner(state, live, now, halved);
+    $('#ch-scope').innerHTML = scope(chain, scored);
 
-    const reportHits = state.chains.reduce((s, c) => s + c.length, 0);
+    const eventHits = boards.hits.reduce((s, m) => s + m.hits, 0);
     $('#ch-cards').innerHTML = `
       <div class="card"><div class="label">Team hits</div><div class="value">${n0(table.hits)}</div>
-        <div class="sub">${n0(reportHits)} in the chain${state.chains.length > 1 ? 's' : ''} · ${n0(table.others.reduce((s, m) => s + m.hits, 0))} by members not on a team</div></div>
+        <div class="sub">in the competition chain, by ${n0(table.players.length)} team members</div></div>
       <div class="card"><div class="label">Qualified</div><div class="value">${n0(table.players.filter((m) => m.qualified).length)} / ${n0(table.players.length)}</div>
         <div class="sub">${comp.qualify}+ hits for a team payout</div></div>
       <div class="card"><div class="label">Prizes</div><div class="value ${halved ? 'neg' : 'pos'}">${halved ? 'Halved' : 'Full'}</div>
         <div class="sub">${halved ? 'the chain broke before 2,500' : state.reached ? 'goal reached!' : 'as long as the chain holds'}</div></div>
-      ${allHits ? `<div class="card"><div class="label">All hits this week</div><div class="value">${n0([...allHits.values()].reduce((s, m) => s + m.hits, 0))}</div>
-        <div class="sub">by ${n0(allHits.size)} members, in a chain or not · to ${tct(comp.end)} TCT</div></div>` : ''}
+      <div class="card"><div class="label">All hits in the event</div><div class="value">${n0(eventHits)}</div>
+        <div class="sub">by ${n0(boards.hits.length)} members${allLog ? ', in a chain or not' : ', in chains only'} · to ${tct(comp.end)} TCT</div></div>
       <div class="card"><div class="label">Leader</div><div class="value small">${esc(table.teams[0]?.name ?? '—')}</div>
         <div class="sub">${r2(table.teams[0]?.score)} hits per member</div></div>`;
 
@@ -189,23 +194,28 @@ export function createChainPage(ctx) {
       <td><span class="team-dot"></span>${esc(t.name)}</td>
       <td class="num">${n0(t.size)}</td>
       <td class="num">${n0(t.hits)}</td>
-      ${allHits ? `<td class="num">${n0(t.allHits)}</td>` : ''}
       <td class="num"><strong>${r2(t.score)}</strong></td>
       <td class="num">${n0(t.qualified)} / ${n0(t.size)}</td>
       <td class="num">${shortMoney(t.prizeEach)}</td>
       <td class="num">${shortMoney(t.payout)}</td>
     </tr>`).join('');
 
-    $('#ch-teams').innerHTML = table.teams.map((t) => teamCard(t, !!allHits)).join('');
-    renderWeek(allHits, line);
-    $('#ch-prizes').innerHTML = prizes(table, state, raffle);
+    $('#ch-teams').innerHTML = table.teams.map(teamCard).join('');
+    $('#ch-prizes').innerHTML = prizes(table, scored);
+    renderEvent(boards, allLog);
     renderBonuses(bonuses, line);
-    $('#ch-others').innerHTML = table.others.length ? `
-      <h2 class="section-title">Hitting, but not on a team</h2>
-      <p class="muted">These members have chain hits but aren't on a team here. If they should be, put them on one under Teams below.</p>
-      <div class="table-wrap"><table><thead><tr><th>Member</th><th class="num">Hits</th><th class="num">Respect</th></tr></thead>
-      <tbody>${table.others.map((m) => `<tr><td>${playerLink(m)}</td><td class="num">${n0(m.hits)}</td><td class="num">${r2(m.regularRespect)}${respectNote(m)}</td></tr>`).join('')}</tbody></table></div>` : '';
     renderSetup(line);
+  }
+
+  /** Which chain the competition is being scored on. */
+  function scope(chain, scored) {
+    if (!chain) return 'Scores count hits 1–2,500 of the first chain to reach 2,500. No chain has started yet.';
+    const which = chain.length >= comp.goal ? `the chain that reached 2,500 (started ${tct(chain.start)} TCT)`
+      : chain.ongoing ? `the running chain (started ${tct(chain.start)} TCT), until one reaches 2,500`
+      : `the last chain (${n0(chain.length)} hits, broke ${tct(chain.end)} TCT), until one reaches 2,500`;
+    const approx = scored.exact ? ''
+      : ` <span class="warn" title="Your key can't read the faction attack log, so hits after the 2,500th can't be told apart">These may include up to ${n0(scored.extra)} hits after the 2,500th.</span>`;
+    return `Team standings, team payouts and individual prizes count only team members' hits 1–2,500 of ${which}.${approx}`;
   }
 
   function banner(state, live, now, halved) {
@@ -238,47 +248,56 @@ export function createChainPage(ctx) {
     return parts.length ? `<div class="muted small">${parts.join(' · ')}</div>` : '';
   }
 
-  function teamCard(t, withAll) {
+  function teamCard(t) {
     const rows = t.members.map((m, i) => `<tr>
       <td class="num muted">${i + 1}</td>
       <td>${playerLink(m)}${respectNote(m)}</td>
       <td class="num"><strong>${n0(m.hits)}</strong></td>
-      ${withAll ? `<td class="num">${n0(m.allHits)}</td>` : ''}
       <td class="num">${r2(m.regularRespect)}</td>
       <td>${m.qualified ? `<span class="pos" title="${comp.qualify}+ hits: qualified for the team payout">✓</span>` : `<span class="muted small">needs ${n0(comp.qualify - m.hits)}</span>`}</td>
-    </tr>`).join('') || `<tr><td colspan="${withAll ? 6 : 5}" class="muted">No members matched yet — set them under Teams below.</td></tr>`;
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">No members matched yet — set them under Teams below.</td></tr>';
     return `<section class="ch-team team-${t.id}">
       <header><h3>${placeLabel(t.place)} · ${esc(t.name)}</h3><span>${r2(t.score)} <span class="muted small">per member</span></span></header>
-      <table class="mini"><thead><tr><th></th><th>Member</th><th class="num" title="Hits in the chain">Chain</th>${withAll ? '<th class="num" title="Every hit this week, in a chain or not">All</th>' : ''}<th class="num">Respect</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="muted small">${n0(t.hits)} chain hits${withAll ? ` · ${n0(t.allHits)} in all` : ''} · ${n0(t.qualified)} of ${n0(t.size)} qualified${t.qualifiedAvg == null ? '' : `, averaging ${r2(t.qualifiedAvg)} hits`} · ${shortMoney(t.prizeEach)} each</div>
+      <table class="mini"><thead><tr><th></th><th>Member</th><th class="num" title="Hits 1–2,500 of the competition chain">Hits</th><th class="num" title="Leaving out bonus hits">Respect</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="muted small">${n0(t.hits)} hits · ${n0(t.qualified)} of ${n0(t.size)} qualified${t.qualifiedAvg == null ? '' : `, averaging ${r2(t.qualifiedAvg)} hits`} · ${shortMoney(t.prizeEach)} each</div>
     </section>`;
   }
 
-  /** Every member's hits in the week from the faction attack log, team or not. */
-  function renderWeek(allHits, line) {
-    // Without the attack log the warning at the top says why this is missing.
-    $('#ch-week').hidden = !allHits;
-    if (!allHits) return;
-    const rows = [...allHits.values()].sort((a, b) => b.hits - a.hits || b.respect - a.respect);
-    const names = new Map(line.members.map((m) => [m.id, m.name]));
-    $('#ch-week-body').innerHTML = `<div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Member</th><th>Team</th>
-      <th class="num">Hits</th><th class="num">In a chain</th><th class="num">Outside</th><th class="num" title="Leaving out bonus hits">Respect</th><th class="num" title="Respect per hit, leaving out bonus hits">Per hit</th><th class="num">Bonus</th><th class="num">Attacks</th><th>Last hit (TCT)</th></tr></thead>
-      <tbody>${rows.map((m, i) => `<tr class="${line.assignment.has(m.id) ? `team-${line.assignment.get(m.id)}` : ''}">
-        <td class="num muted">${i + 1}</td>
-        <td>${playerLink({ id: m.id, name: names.get(m.id) ?? m.name })}</td>
-        <td>${line.assignment.has(m.id) ? `<span class="team-dot"></span>${esc(teamName(line.assignment.get(m.id)))}` : '<span class="muted">—</span>'}</td>
+  /** The event leaderboards: every faction member by hits and by respect, and teams by average hits and respect. */
+  function renderEvent(boards, allLog) {
+    const teamCell = (m) => (m.team ? `<span class="team-dot"></span>${esc(teamName(m.team))}` : '<span class="muted">—</span>');
+    const empty = (cols) => `<tr><td colspan="${cols}" class="muted">No hits yet.</td></tr>`;
+    $('#ch-event-note').textContent = allLog
+      ? `Every hit by every faction member from ${tct(comp.start)} TCT to midnight at the end of Sat 31 Oct, in a chain or not, from the faction attack log. These don't change the competition, which counts the 2,500 chain only.`
+      : 'Every chain hit by every faction member since the start, from the chain reports. Hits outside a chain need a key with faction API access. These don\'t change the competition, which counts the 2,500 chain only.';
+
+    const hitCols = allLog ? 8 : 5;
+    $('#ch-event-hits').innerHTML = `<thead><tr><th class="num">#</th><th>Member</th><th>Team</th><th class="num">Hits</th>
+      ${allLog ? '<th class="num">In a chain</th><th class="num">Outside</th><th class="num" title="Attacks of any result, assists and losses too">Attacks</th><th>Last hit (TCT)</th>' : '<th class="num" title="Assists, losses, escapes and stalemates">Other attacks</th>'}</tr></thead>
+      <tbody>${boards.hits.map((m) => `<tr class="${m.team ? `team-${m.team}` : ''}">
+        <td class="num muted">${m.place}</td><td>${playerLink(m)}</td><td>${teamCell(m)}</td>
         <td class="num"><strong>${n0(m.hits)}</strong></td>
-        <td class="num">${n0(m.chainHits)}</td>
-        <td class="num">${n0(m.hits - m.chainHits)}</td>
-        <td class="num">${r2(m.regularRespect)}</td>
+        ${allLog ? `<td class="num">${n0(m.chainHits)}</td><td class="num">${n0(m.hits - m.chainHits)}</td><td class="num muted">${n0(m.attacks)}</td><td>${m.lastHit ? tct(m.lastHit) : '—'}</td>`
+          : `<td class="num muted">${n0(m.assists + m.losses)}</td>`}
+      </tr>`).join('') || empty(hitCols)}</tbody>`;
+
+    $('#ch-event-respect').innerHTML = `<thead><tr><th class="num">#</th><th>Member</th><th>Team</th><th class="num" title="Leaving out bonus hits">Respect</th><th class="num">Hits</th><th class="num" title="Respect per hit, leaving out bonus hits">Per hit</th><th class="num" title="Not counted in Respect">Bonus left out</th></tr></thead>
+      <tbody>${boards.respect.map((m) => `<tr class="${m.team ? `team-${m.team}` : ''}">
+        <td class="num muted">${m.place}</td><td>${playerLink(m)}</td><td>${teamCell(m)}</td>
+        <td class="num"><strong>${r2(m.regularRespect)}</strong></td>
+        <td class="num">${n0(m.hits - m.bonusHits)}</td>
         <td class="num">${r2(m.perHit)}</td>
-        <td class="num">${m.bonusHits ? `${n0(m.bonusRespect)} <span class="muted small">(${n0(m.bonusHits)})</span>` : '—'}</td>
-        <td class="num muted">${n0(m.attacks)}</td>
-        <td>${m.lastHit ? tct(m.lastHit) : '—'}</td>
-      </tr>`).join('') || '<tr><td colspan="11" class="muted">No attacks yet.</td></tr>'}</tbody></table></div>`;
+        <td class="num muted">${m.bonusHits ? `${n0(m.bonusRespect)} <span class="small">(${n0(m.bonusHits)})</span>` : '—'}</td>
+      </tr>`).join('') || empty(7)}</tbody>`;
+
+    const teamTable = (rows, fmt, label) => `<thead><tr><th class="num">Place</th><th>Team</th><th class="num">Members</th><th class="num">${label}</th><th class="num">Average</th></tr></thead>
+      <tbody>${rows.map((t) => `<tr class="team-${t.id}"><td class="num">${placeLabel(t.place)}</td><td><span class="team-dot"></span>${esc(t.name)}</td>
+        <td class="num">${n0(t.size)}</td><td class="num">${fmt(t.total)}</td><td class="num"><strong>${r2(t.average)}</strong></td></tr>`).join('')}</tbody>`;
+    $('#ch-event-team-hits').innerHTML = teamTable(boards.teamHits, n0, 'Hits');
+    $('#ch-event-team-respect').innerHTML = teamTable(boards.teamRespect, r2, 'Respect');
   }
 
-  /** Every bonus hit (10, 25, 50…) in the counted chains: who made it and the bonus respect. */
+  /** Every bonus hit (10, 25, 50…) in the chains since the start: who made it and the bonus respect. */
   function renderBonuses(bonuses, line) {
     $('#ch-bonus').hidden = !bonuses.length;
     if (!bonuses.length) return;
@@ -296,23 +315,18 @@ export function createChainPage(ctx) {
     }).join('');
   }
 
-  function prizes(table, state, raffleCount) {
-    const chain = raffleChain(state, comp);
-    const which = !chain ? 'the first 2,500-hit chain'
-      : chain.length >= comp.goal ? 'hits 1–2,500 of the chain that reached 2,500'
-      : chain.ongoing ? 'hits in the running chain, up to its 2,500th' : 'hits in the last chain, until one reaches 2,500';
-    const approx = raffleCount.exact ? ''
-      : ` <span class="warn" title="Your key can't read the faction attack log, so hits after the 2,500th can't be told apart">(may include up to ${n0(raffleCount.extra)} hits after the 2,500th)</span>`;
+  function prizes(table, scored) {
+    const approx = scored.exact ? '' : ' <span class="warn">(approximate)</span>';
     const soul = table.soulCollector;
     const soulList = soul.leaders.map((m, i) => `<div>${i + 1}. ${playerLink(m)} <span class="muted small">${esc(teamName(m.team))}</span> — ${r2(m.regularRespect)}</div>`).join('')
       || '<div class="muted">No respect yet</div>';
     const raffle = (r) => `<div class="card"><div class="label">${esc(r.name)} · ${shortMoney(r.prize)}</div>
       <div class="value">${n0(r.entrants.length)} <span class="of">in the draw</span></div>
-      <div class="sub">Random raffle among ${r.min}+ hits, counting ${which}${approx}${r.entrants.length
-        ? `: ${r.entrants.map((m) => `${esc(m.name)} <span class="muted">(${n0(m.raffleHits)})</span>`).join(', ')}` : ''}</div></div>`;
+      <div class="sub">Random raffle among ${r.min}+ hits in the 2,500 chain${approx}${r.entrants.length
+        ? `: ${r.entrants.map((m) => `${esc(m.name)} <span class="muted">(${n0(m.hits)})</span>`).join(', ')}` : ''}</div></div>`;
     return `
       <div class="card"><div class="label">Soul Collector · ${shortMoney(soul.prize)}</div>
-        <div class="sub">Highest respect from regular hits (bonus hits don't count)</div>
+        <div class="sub">Highest respect from regular hits in the 2,500 chain (bonus hits don't count)${approx}</div>
         <div class="ch-list">${soulList}</div></div>
       ${table.raffles.map(raffle).join('')}
       <div class="card"><div class="label">${esc(table.mvp.name)} · ${shortMoney(table.mvp.prize)}</div>
