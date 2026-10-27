@@ -1,7 +1,8 @@
-// Chain competition: faction members split into teams, scored on their hits in the faction's chains
-// since the competition started. Hits and respect come from Torn's chain reports (public key), which
-// list every member's attacks and respect plus each bonus hit. Every hit in the competition week, in a
-// chain or not, comes from the faction attack log where the key has faction API access.
+// Chain competition: faction members split into teams, scored on hits 1–2,500 of the chain that reaches
+// 2,500 (the running chain until one does). Hits and respect come from Torn's chain reports (public key),
+// which list every member's attacks and respect plus each bonus hit, or exactly from the faction attack
+// log where the key has faction API access. The event leaderboards count every hit by every faction
+// member during the event, in a chain or not, from the attack log (every chain's reports without it).
 
 import { meta } from './db.js';
 
@@ -14,7 +15,6 @@ export const COMPETITION = {
   qualify: 30, // hits a member needs for their team payout
   placePrizes: [25e6, 15e6, 10e6, 5e6],
   soulCollector: 100e6, // highest respect from regular hits (bonus hits don't count)
-  // Raffle entry counts only hits 1–2,500 of the first chain to reach 2,500 (the running chain until then).
   raffles: [
     { id: 'trick', name: 'Trick or Treat', prize: 50e6, min: 50 },
     { id: 'blood', name: 'Bloodthirsty', prize: 100e6, min: 100 },
@@ -167,59 +167,72 @@ export function bonusList(reports) {
 }
 
 /**
- * Standings: teams ranked by hits per member, with what each member and team is set to win.
- * `assignment` is Map(memberId -> teamId); `names` Map(memberId -> name); `totals` from memberTotals;
- * `allHits` (optional) from weekHits, for every hit in the week whether or not it was in a chain;
- * `raffleHits` (optional) Map(memberId -> hits) that count for the raffles, from raffleHits.
+ * Standings: teams ranked by hits per member, with what each member and team is set to win. Only team
+ * members count. `assignment` is Map(memberId -> teamId); `names` Map(memberId -> name); `totals` the
+ * hits and respect that count for the competition, from competitionTotals.
  */
-export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, allHits = null, raffleHits = null, broken = false, comp = COMPETITION }) {
+export function standings({ teams = DEFAULT_TEAMS, assignment, names, totals, broken = false, comp = COMPETITION }) {
   const factor = broken ? 0.5 : 1;
-  const blank = { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0, regularRespect: 0, perHit: null };
-  const memberRow = (id, team) => {
-    const t = totals.get(id) ?? blank;
-    return { id, name: names.get(id) ?? allHits?.get(id)?.name ?? `#${id}`, team, ...t, qualified: t.hits >= comp.qualify,
-      allHits: allHits ? allHits.get(id)?.hits ?? 0 : null };
-  };
   const rows = teams.map((team) => {
-    const members = [...assignment].filter(([, t]) => t === team.id).map(([id]) => memberRow(id, team.id))
-      .sort((a, b) => b.hits - a.hits || b.regularRespect - a.regularRespect || a.name.localeCompare(b.name));
+    const members = teamMembers(team.id, assignment).map((id) => {
+      const t = totals.get(id) ?? BLANK;
+      return { id, name: names.get(id) ?? `#${id}`, team: team.id, ...t, qualified: t.hits >= comp.qualify };
+    }).sort((a, b) => b.hits - a.hits || b.regularRespect - a.regularRespect || a.name.localeCompare(b.name));
     const hits = members.reduce((s, m) => s + m.hits, 0);
     const qualified = members.filter((m) => m.qualified);
     return { ...team, members, hits, size: members.length, score: members.length ? hits / members.length : 0,
       qualified: qualified.length,
-      qualifiedAvg: qualified.length ? qualified.reduce((s, m) => s + m.hits, 0) / qualified.length : null,
-      allHits: allHits ? members.reduce((s, m) => s + (m.allHits ?? 0), 0) : null };
+      qualifiedAvg: qualified.length ? qualified.reduce((s, m) => s + m.hits, 0) / qualified.length : null };
   }).sort((a, b) => b.score - a.score || b.hits - a.hits);
-
-  // Teams level on score share the higher place.
-  rows.forEach((t, i) => {
-    t.place = i > 0 && t.score === rows[i - 1].score ? rows[i - 1].place : i + 1;
+  rank(rows, 'score');
+  for (const t of rows) {
     t.prizeEach = (comp.placePrizes[t.place - 1] ?? 0) * factor;
     t.payout = t.prizeEach * t.qualified;
     for (const m of t.members) m.payout = m.qualified ? t.prizeEach : 0;
-  });
+  }
 
   const players = rows.flatMap((t) => t.members);
-  const onTeam = new Set(players.map((m) => m.id));
-  const others = [...totals.keys()].filter((id) => !onTeam.has(id)).map((id) => memberRow(id, null))
-    .filter((m) => m.hits > 0).sort((a, b) => b.hits - a.hits);
-
   const byRespect = [...players].filter((m) => m.regularRespect > 0).sort((a, b) => b.regularRespect - a.regularRespect);
-  // Raffles count hits in the raffle chain only (see raffleHits); without that, every chain hit.
-  const raffleCount = (m) => (raffleHits ? raffleHits.get(m.id) ?? 0 : m.hits);
-  const raffles = comp.raffles.map((r) => ({
-    ...r, prize: r.prize * factor,
-    entrants: players.filter((m) => raffleCount(m) >= r.min).map((m) => ({ ...m, raffleHits: raffleCount(m) })),
-  }));
   return {
     teams: rows,
-    others,
     players,
     soulCollector: { prize: comp.soulCollector * factor, leaders: byRespect.slice(0, 5) },
-    raffles,
+    raffles: comp.raffles.map((r) => ({ ...r, prize: r.prize * factor, entrants: players.filter((m) => m.hits >= r.min) })),
     mvp: { ...comp.mvp, prize: comp.mvp.prize * factor },
     hits: players.reduce((s, m) => s + m.hits, 0),
   };
+}
+
+/**
+ * The event leaderboards: every faction member ranked by hits and by respect (leaving out bonus hits),
+ * and teams ranked by their members' average hits and respect. `totals` is from weekHits, or memberTotals
+ * over every chain since the start without the attack log.
+ */
+export function eventBoards({ teams = DEFAULT_TEAMS, assignment, names, totals }) {
+  const players = [...totals].map(([id, t]) => ({ ...BLANK, ...t, id, name: names.get(id) ?? t.name ?? `#${id}`, team: assignment.get(id) ?? null }))
+    .filter((m) => m.hits > 0 || m.attacks > 0);
+  const team = (key) => rank(teams.map((t) => {
+    const ids = teamMembers(t.id, assignment);
+    const total = ids.reduce((s, id) => s + (totals.get(id)?.[key] ?? 0), 0);
+    return { id: t.id, name: t.name, size: ids.length, total, average: ids.length ? total / ids.length : 0 };
+  }).sort((a, b) => b.average - a.average || b.total - a.total), 'average');
+  return {
+    // Each board gets its own copies, since rank() sets each row's place.
+    hits: rank(players.map((m) => ({ ...m })).sort((a, b) => b.hits - a.hits || b.regularRespect - a.regularRespect || a.name.localeCompare(b.name)), 'hits'),
+    respect: rank(players.filter((m) => m.regularRespect > 0).map((m) => ({ ...m })).sort((a, b) => b.regularRespect - a.regularRespect), 'regularRespect'),
+    teamHits: team('hits'),
+    teamRespect: team('regularRespect'),
+  };
+}
+
+const BLANK = { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0, regularRespect: 0, perHit: null };
+
+const teamMembers = (teamId, assignment) => [...assignment].filter(([, t]) => t === teamId).map(([id]) => id);
+
+/** Number sorted rows 1, 2, 3…, rows level on `key` sharing the higher place. */
+function rank(rows, key) {
+  rows.forEach((r, i) => { r.place = i > 0 && r[key] === rows[i - 1][key] ? rows[i - 1].place : i + 1; });
+  return rows;
 }
 
 // ---------- saving & syncing ----------
@@ -263,7 +276,7 @@ export async function syncChain(db, client, player, { comp = COMPETITION, member
     reports[c.id] = trimReport(await client.chainReport(c.id));
   }
   // The first time a chain is seen at 2,500 or more, keep its report as it was then: without the attack
-  // log it's the closest to "hits 1–2,500" for the raffles, since later reports include later hits.
+  // log it's the closest to "hits 1–2,500" for the competition, since later reports include later hits.
   const capped = { ...saved.capped };
   if (live?.current >= comp.goal && latest?.id === live.id && !capped[live.id]) {
     capped[live.id] = { report: trimReport(latest), current: live.current, at: now };
@@ -282,9 +295,9 @@ export function trimReport(r) {
   };
 }
 
-// ---------- every hit in the week ----------
+// ---------- every hit in the event ----------
 // The faction attack log has every attack by every member, chained or not. It needs a key with
-// faction API access, so it's an extra: the competition itself is scored from the chain reports.
+// faction API access, so it's an extra: without it, scores come from the chain reports.
 
 /** Attack results where the member beat their target. */
 export const HIT_RESULTS = new Set(['Attacked', 'Mugged', 'Hospitalized', 'Arrested', 'Looted', 'Bounty']);
@@ -354,36 +367,43 @@ export function weekHits(attacks, comp = COMPETITION) {
   return out;
 }
 
-// ---------- raffles ----------
+// ---------- the competition chain ----------
 
 /**
- * The chain whose hits count for the raffles: the first since the start to reach the goal, or, until one
+ * The chain the competition is scored on: the first since the start to reach the goal, or, until one
  * has, the latest (the running chain, or the last one if it broke). `state` is from chainState.
  */
-export function raffleChain(state, comp = COMPETITION) {
+export function competitionChain(state, comp = COMPETITION) {
   return state.chains.find((c) => c.length >= comp.goal) ?? state.chains.at(-1) ?? null;
 }
 
 /**
- * Each member's hits 1–`comp.goal` in the raffle chain: { hits: Map(id -> n), exact, extra }.
- * From the faction attack log when there is one (exact, by chain position). Otherwise from the chain's
- * report — or, once it passed the goal, the copy saved when it was first seen there — which may include
- * up to `extra` hits after the goal.
+ * Each member's hits 1–`comp.goal` of the competition chain, and their respect: { totals: Map(id -> totals
+ * as memberTotals gives), exact, extra }. From the faction attack log when there is one (exact, by chain
+ * position). Otherwise from the chain's report — or, once it passed the goal, the copy saved when it was
+ * first seen there — which may include up to `extra` hits after the goal.
  */
-export function raffleHits({ chain, reports, attacks = null, capped = {}, comp = COMPETITION }) {
-  const hits = new Map();
-  if (!chain) return { hits, exact: true, extra: 0 };
+export function competitionTotals({ chain, reports, attacks = null, capped = {}, comp = COMPETITION }) {
+  if (!chain) return { totals: new Map(), exact: true, extra: 0 };
   if (attacks) {
+    const totals = new Map();
     for (const a of attacks) {
       if (!a.attacker || !HIT_RESULTS.has(a.result) || a.chain < 1 || a.chain > comp.goal) continue;
       if (a.started < chain.start - 60 || (chain.end && a.started > chain.end)) continue;
-      hits.set(a.attacker.id, (hits.get(a.attacker.id) ?? 0) + 1);
+      const t = totals.get(a.attacker.id) ?? { hits: 0, respect: 0, bonusRespect: 0, bonusHits: 0, losses: 0, assists: 0 };
+      t.hits++;
+      t.respect += a.respect;
+      if (BONUS_HITS.has(a.chain)) { t.bonusHits++; t.bonusRespect += a.respect; }
+      totals.set(a.attacker.id, t);
     }
-    return { hits, exact: true, extra: 0 };
+    for (const t of totals.values()) {
+      t.regularRespect = t.respect - t.bonusRespect;
+      t.perHit = perHit(t.regularRespect, t.hits - t.bonusHits);
+    }
+    return { totals, exact: true, extra: 0 };
   }
   const saved = capped[chain.id];
   const report = saved?.report ?? reports.find((r) => r.id === chain.id);
-  for (const [id, t] of reportTotals(report)) hits.set(id, t.hits);
   const upTo = saved ? saved.current : chain.length;
-  return { hits, exact: upTo <= comp.goal, extra: Math.max(0, upTo - comp.goal) };
+  return { totals: memberTotals(report ? [report] : []), exact: upTo <= comp.goal, extra: Math.max(0, upTo - comp.goal) };
 }
