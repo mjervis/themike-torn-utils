@@ -9,6 +9,7 @@ export const TTL = {
   catalog: 15 * 60,          // market values move, but not minute to minute
   logTypes: 7 * 24 * 3600,   // practically static
   inventory: 60 * 60,        // Torn caches inventory for an hour per category anyway
+  bazaar: 5 * 60,            // listings sell, so not for long; Update always re-reads it
 };
 
 // Re-read a little before the last sync point so logs written late aren't missed; ids de-duplicate.
@@ -56,6 +57,10 @@ export function loadGyms(db, client, opts) {
 export function loadInventory(db, client, player, { force, onCategory, now } = {}) {
   return cached(db, `cache:inventory:${player}`, TTL.inventory,
     () => client.inventory({ bypassCache: force, onCategory }), { force, now });
+}
+
+export function loadBazaar(db, client, player, { force, now } = {}) {
+  return cached(db, `cache:bazaar:${player}`, TTL.bazaar, () => client.bazaar(), { force, now });
 }
 
 /**

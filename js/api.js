@@ -141,6 +141,21 @@ export function createClient(key) {
     },
 
     /**
+     * What you have listed in your bazaar: [{ id, name, qty, price }]. API v2 has no bazaar of its
+     * own yet and hands `selections=bazaar` to v1, so the v1 field names are read as well.
+     */
+    async bazaar() {
+      const body = await get('/user', { selections: 'bazaar' });
+      const list = Array.isArray(body.bazaar) ? body.bazaar : Object.values(body.bazaar ?? {});
+      return list.map((b) => ({
+        id: Number(b.ID ?? b.id ?? b.item_id),
+        name: b.name ?? '',
+        qty: Number(b.quantity ?? b.amount ?? b.qty) || 0,
+        price: Number(b.price) || null,
+      })).filter((b) => b.id && b.qty > 0);
+    },
+
+    /**
      * Logs of the given types, newest first, walking back in time.
      * Starts at `to` (default: now) and stops at `from` (unix seconds) or after `maxPages` pages of 100.
      */

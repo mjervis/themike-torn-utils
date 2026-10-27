@@ -156,9 +156,11 @@ export function lotsByItem(logs, findTypeIds = new Set()) {
  * Work out what the units you still hold cost you.
  *  - 'recent':  assume you sold/used the oldest first, so the units you hold are the most recent buys.
  *  - 'average': weighted average of every purchase and find (finds count as $0).
+ * `skip` passes over that many of the newest units first, for stock held somewhere else that
+ * has already been costed (bazaar listings are costed after the inventory).
  * Returns { unitCost, coveredQty, lots } or null when there is nothing to go on.
  */
-export function costBasis(lots, heldQty, method = 'recent') {
+export function costBasis(lots, heldQty, method = 'recent', skip = 0) {
   if (!lots?.length || heldQty <= 0) return null;
 
   if (method === 'average') {
@@ -168,16 +170,21 @@ export function costBasis(lots, heldQty, method = 'recent') {
   }
 
   let remaining = heldQty;
+  let skipping = skip;
   let spend = 0;
   const used = [];
   for (const lot of lots) {
     if (remaining <= 0) break;
-    const take = Math.min(lot.qty, remaining);
+    const passed = Math.min(lot.qty, skipping);
+    skipping -= passed;
+    const take = Math.min(lot.qty - passed, remaining);
+    if (take <= 0) continue;
     spend += take * lot.unitCost;
     remaining -= take;
     used.push({ ...lot, used: take });
   }
   const covered = heldQty - remaining;
+  if (!covered) return null;
   return { unitCost: spend / covered, coveredQty: covered, lots: used };
 }
 
