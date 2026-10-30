@@ -323,6 +323,7 @@
             <select id="tg-sort">
               <option value="status">Ready first</option>
               <option value="mugged">Most mugged</option>
+              <option value="lastMug">Biggest last mug</option>
               <option value="lastWin">Most recent win</option>
               <option value="respect">Most respect</option>
               <option value="ff">Highest fair fight</option>
@@ -351,8 +352,8 @@
         <p class="footnote">Targets are everyone you've beaten (attacked, mugged, hospitalised, looted, arrested or claimed a bounty on), from your own attack history.
           Each status check is one API call per player, spaced a second apart; “Check statuses” looks up the most recently beaten targets in the current level and date filters whose status is over a minute old.
           Hospital and jail timers count down from the last check; once one runs out the target shows as Ready, but they may have been hit again since — check again before attacking.
-          Last active and Ready only filter targets that have been checked. Respect and FF (the fair fight bonus) are from your last win on each target, and the sort options use those.
-          Mugged money comes from your mug logs (Settings → Mug log types) and is counted for mugs in the “Beaten in” range; a mug log that doesn't name the player is matched to your Mugged attack that ended at the same time.</p>
+          Last active and Ready only filter targets that have been checked. Respect and FF (the fair fight bonus) are from your last win on each target, and the sort options use those; respect leaves out chain bonus hits (10, 25, 50…) and the chain multiplier, so it's what the target is worth on its own.
+          Mugged money comes from your mug logs (Settings → Mug log types) and is counted for mugs in the “Beaten in” range; a mug log that doesn't name the player is matched to your Mugged attack that ended at the same time. “Last” is the amount and date of your most recent mug on them.</p>
       </section>
     </div>
 

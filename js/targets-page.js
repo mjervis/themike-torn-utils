@@ -254,6 +254,7 @@ export function createTargetsPage(ctx) {
   const SORTS = {
     status: compareTargets,
     mugged: (a, b) => (b.mugged?.money ?? 0) - (a.mugged?.money ?? 0) || compareTargets(a, b),
+    lastMug: (a, b) => (b.mugged?.lastAmount ?? 0) - (a.mugged?.lastAmount ?? 0) || compareTargets(a, b),
     lastWin: (a, b) => (b.lastWin ?? 0) - (a.lastWin ?? 0),
     level: (a, b) => (b.level ?? 0) - (a.level ?? 0) || compareTargets(a, b),
     // Both from your last win on them, so they reflect the target's current stats against yours.
@@ -286,7 +287,7 @@ export function createTargetsPage(ctx) {
       <td>${last ? `${esc(last.status)}<div class="muted small">${ago(last.timestamp, now)}</div>` : '—'}</td>
       <td class="num">${life ? `${n0(life.current)} / ${n0(life.maximum)}` : '—'}</td>
       <td class="num">${n0(r.wins)}${r.losses ? ` <span class="neg small">${n0(r.losses)} lost</span>` : ''}</td>
-      <td class="num">${r.mugged ? `${money(r.mugged.money)}<div class="muted small">${n0(r.mugged.mugs)} mug${r.mugged.mugs === 1 ? '' : 's'} · best ${money(r.mugged.biggest)}</div>`
+      <td class="num">${r.mugged ? `${money(r.mugged.money)}<div class="muted small">last ${money(r.mugged.lastAmount)} · ${day(r.mugged.lastMug)}</div><div class="muted small">${n0(r.mugged.mugs)} mug${r.mugged.mugs === 1 ? '' : 's'} · best ${money(r.mugged.biggest)}</div>`
         : r.mugs ? `<span class="muted" title="Mugged in your attacks, but no mug log found for the money">${n0(r.mugs)} mug${r.mugs === 1 ? '' : 's'}</span>` : '—'}</td>
       <td>${tct(r.lastWin)}<div class="muted small">${esc(r.lastResult)}${r.respect ? ` · ${r.respect.toFixed(2)} respect` : ''}</div></td>
       <td class="num">${r.ff == null ? '—' : r.ff.toFixed(2)}</td>

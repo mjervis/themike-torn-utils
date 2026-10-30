@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { memoryDb } from '../js/db.js';
+import { memoryDb, meta } from '../js/db.js';
 import { createClient } from '../js/api.js';
 import {
-  syncAttacks, beatenTargets, targetStatus, compareTargets, trimAttack, isMugLogTitle, parseMug, mugTotals,
+  syncAttacks, beatenTargets, targetStatus, compareTargets, trimAttack, isMugLogTitle, parseMug, mugTotals, baseRespect,
 } from '../js/targets.js';
 
 const ME = 1;
@@ -103,6 +103,21 @@ test('syncAttacks backfills once, then only asks for newer attacks', async () =>
   assert.equal(second.complete, true);
 });
 
+test('syncAttacks reads history again when saved before chain positions were kept', async () => {
+  const db = memoryDb();
+  const old = { ...trimAttack(attack(1, 1000, 7, 'Hospitalized')) };
+  delete old.chain;
+  await meta.set(db, `targets:attacks:${ME}`, { attacks: [old], complete: true, at: 1 });
+  const calls = [];
+  const client = { async attacks(opts) { calls.push(opts); return [attack(1, 1000, 7, 'Hospitalized', { chain: 10 })]; } };
+  const synced = await syncAttacks(db, client, ME, { maxPages: 3, now: 5000 });
+  assert.equal(calls[0].from, undefined);
+  assert.equal(synced.attacks[0].chain, 10);
+  assert.equal(synced.complete, true);
+  await syncAttacks(db, client, ME, { now: 6000 });
+  assert.equal(calls[1].from, 1000 - 300);
+});
+
 test('client.attacks asks for outgoing attacks and pages back by start time', { timeout: 20000 }, async () => {
   const urls = [];
   const page = (start) => Array.from({ length: 100 }, (_, i) => attack(start - i, start - i, 7, 'Attacked'));
@@ -152,10 +167,25 @@ test('mugTotals adds up per target, matching logs with no victim to the attack b
   assert.equal(all.total, 2850);
   assert.equal(all.count, 4);
   assert.equal(all.unmatched, 1);
-  assert.deepEqual(all.byTarget.get(7), { mugs: 2, money: 800, biggest: 500, lastMug: 6000 });
-  assert.deepEqual(all.byTarget.get(8), { mugs: 1, money: 2000, biggest: 2000, lastMug: 5032 });
+  assert.deepEqual(all.byTarget.get(7), { mugs: 2, money: 800, biggest: 500, lastMug: 6000, lastAmount: 300 });
+  assert.deepEqual(all.byTarget.get(8), { mugs: 1, money: 2000, biggest: 2000, lastMug: 5032, lastAmount: 2000 });
 
   const recent = mugTotals(logs, attacks, ME, 5000);
   assert.equal(recent.total, 2350);
   assert.equal(recent.byTarget.get(7).money, 300);
+});
+
+test('respect leaves out chain bonus hits and the chain multiplier', () => {
+  const attacks = [
+    attack(1, 100, 7, 'Hospitalized', { respect_gain: 3, chain: 9, modifiers: { fair_fight: 2, chain: 1.5 } }),
+    attack(2, 200, 7, 'Attacked', { respect_gain: 40, chain: 10, modifiers: { fair_fight: 2, chain: 1.5 } }), // bonus hit
+    attack(3, 300, 8, 'Mugged', { respect_gain: 4, chain: 0 }),
+  ].map(trimAttack);
+  assert.equal(baseRespect(attacks[0]), 2);
+  assert.equal(baseRespect(attacks[1]), null);
+  assert.equal(baseRespect(attacks[2]), 4);
+  const rows = new Map(beatenTargets(attacks, ME).map((r) => [r.id, r]));
+  assert.equal(rows.get(7).respect, 2);
+  assert.equal(rows.get(7).lastWin, 200);
+  assert.equal(rows.get(8).respect, 4);
 });
