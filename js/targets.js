@@ -2,6 +2,7 @@
 // Attacks are saved per player and fetched incrementally; statuses are one profile call per target.
 
 import { meta } from './db.js';
+import { BONUS_HITS } from './chain.js';
 
 /** Attack results that count as beating the defender. */
 export const WIN_RESULTS = new Set(['Attacked', 'Mugged', 'Hospitalized', 'Looted', 'Arrested', 'Bounty']);
@@ -13,6 +14,8 @@ const OVERLAP = 5 * 60;
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const attacksKey = (player) => `targets:attacks:${player}`;
+// Saved attacks from before chain position was kept are read again so their respect can be corrected.
+const ATTACKS_VERSION = 2;
 const statusKey = (player) => `targets:status:${player}`;
 
 /** Keep just what the Targets page reads, so years of attacks stay small. */
@@ -26,7 +29,18 @@ export function trimAttack(a) {
     defender: { id: a.defender.id, name: a.defender.name, level: a.defender.level, faction: a.defender.faction?.name ?? null },
     respect: a.respect_gain ?? 0,
     ff: a.modifiers?.fair_fight ?? null,
+    chain: a.chain ?? null,
+    chainMod: a.modifiers?.chain ?? null,
   };
+}
+
+/**
+ * Respect from a win without the chain's part: the chain multiplier divided out, and null for a
+ * bonus hit (10, 25, 50…), whose respect is the chain bonus rather than anything about the target.
+ */
+export function baseRespect(a) {
+  if (a.chain != null && BONUS_HITS.has(a.chain)) return null;
+  return (a.respect ?? 0) / (a.chainMod > 0 ? a.chainMod : 1);
 }
 
 /**
@@ -34,7 +48,9 @@ export function trimAttack(a) {
  * whole history (up to `maxPages`) the first time. `older` walks back past the oldest saved instead.
  */
 export async function syncAttacks(db, client, player, { maxPages = 20, older = false, onProgress, now = nowSec() } = {}) {
-  const saved = (await meta.get(db, attacksKey(player))) ?? { attacks: [], complete: false, at: null };
+  const stored = await meta.get(db, attacksKey(player));
+  const current = stored?.v === ATTACKS_VERSION;
+  const saved = stored ?? { attacks: [], complete: false, at: null };
   const byId = new Map(saved.attacks.map((a) => [a.id, a]));
   const onPage = (n, page) => onProgress?.(`Reading your attacks… ${n} found (page ${page})`);
   let fetched;
@@ -43,7 +59,7 @@ export async function syncAttacks(db, client, player, { maxPages = 20, older = f
     const oldest = Math.min(...saved.attacks.map((a) => a.started));
     fetched = await client.attacks({ to: Number.isFinite(oldest) ? oldest : undefined, maxPages, onPage });
     complete = fetched.length < maxPages * 100;
-  } else if (saved.attacks.length) {
+  } else if (current && saved.attacks.length) {
     const newest = Math.max(...saved.attacks.map((a) => a.started));
     fetched = await client.attacks({ from: newest - OVERLAP, maxPages: 50, onPage });
   } else {
@@ -53,7 +69,7 @@ export async function syncAttacks(db, client, player, { maxPages = 20, older = f
   const before = byId.size;
   for (const a of fetched) byId.set(a.id, trimAttack(a));
   const attacks = [...byId.values()].sort((a, b) => b.started - a.started);
-  const value = { attacks, complete, at: now };
+  const value = { v: ATTACKS_VERSION, attacks, complete: current ? complete : complete || saved.complete, at: now };
   await meta.set(db, attacksKey(player), value);
   return { ...value, added: byId.size - before };
 }
@@ -82,7 +98,9 @@ export function beatenTargets(attacks, me) {
       row.lastWin = a.started;
       row.lastResult = a.result;
       row.ff = a.ff;
-      row.respect = a.respect;
+      // A bonus hit says nothing about the target, so keep the respect from the win before it.
+      const respect = baseRespect(a);
+      if (respect != null) row.respect = respect;
       if (a.result === 'Mugged') row.mugs++;
     } else {
       row.losses++;
@@ -129,7 +147,7 @@ export function parseMug(log) {
 const MUG_MATCH_SECS = 120;
 
 /**
- * Mug money per target: { byTarget: Map(id -> { mugs, money, biggest, lastMug }), total, count, unmatched }.
+ * Mug money per target: { byTarget: Map(id -> { mugs, money, biggest, lastMug, lastAmount }), total, count, unmatched }.
  * Logs without a victim are matched to your nearest "Mugged" attack that ended within two minutes.
  * Only mugs from `from` (unix seconds) on are counted.
  */
@@ -150,11 +168,12 @@ export function mugTotals(mugLogs, attacks, me, from = -Infinity) {
     total += m.amount;
     count++;
     if (victim == null) { unmatched++; continue; }
-    const t = byTarget.get(victim) ?? { mugs: 0, money: 0, biggest: 0, lastMug: null };
+    const t = byTarget.get(victim) ?? { mugs: 0, money: 0, biggest: 0, lastMug: null, lastAmount: null };
     t.mugs++;
     t.money += m.amount;
     t.biggest = Math.max(t.biggest, m.amount);
     t.lastMug = m.timestamp;
+    t.lastAmount = m.amount;
     byTarget.set(victim, t);
   }
   return { byTarget, total, count, unmatched };
