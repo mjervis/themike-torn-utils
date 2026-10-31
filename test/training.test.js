@@ -108,6 +108,7 @@ test('jumpRole picks out Xanax, Ecstasy and big happy items', () => {
   assert.equal(jumpRole({ name: 'Ecstasy', type: 'Drug' }), 'ecstasy');
   assert.equal(jumpRole({ name: 'Erotic DVD', type: 'Booster', effect: 'Increases happiness by 2,500 and booster cooldown by 6 hours.' }), 'happy');
   assert.equal(jumpRole({ name: 'Lollipop', type: 'Candy', effect: 'Increases happiness by 25.' }), null);
+  assert.equal(jumpRole({ name: 'Shrooms', type: 'Drug', effect: 'Increases happiness by 500.' }), null);
 });
 
 test('planJumps uses stock first and buys only what is short', () => {
@@ -158,13 +159,15 @@ test('trainGain follows the gym formula and grows with happy', () => {
 });
 
 test('gymDots reads the API\'s ×10 dots', () => {
+  assert.equal(gymDots({ modifiers: { strength: 3.4, speed: 0 } }, 'strength'), 3.4);
+  assert.equal(gymDots({ modifiers: { speed: 0 } }, 'speed'), null);
   assert.equal(gymDots({ strength: 34 }, 'strength'), 3.4);
   assert.equal(gymDots({ defense: 5 }, 'defense'), 5);
   assert.equal(gymDots({}, 'speed'), null);
 });
 
 test('calibrate fits perks so the formula matches your own sessions', () => {
-  const gym = { id: 9, energy_cost: 10, defense: 40 };
+  const gym = { id: 9, energy_cost: 10, modifiers: { defense: 4 } };
   const actual = 1.25 * simulateTraining({ stat: 'defense', value: 13000, happy: 5000, energy: 150, energyPerTrain: 10, dots: 4, happyPerEnergy: 0.5 });
   const sessions = [
     { id: 1, timestamp: 100, stat: 'defense', before: 13000, gain: actual, trains: 15, energy: 150, happy: 75, gym: 9 },

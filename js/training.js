@@ -53,11 +53,15 @@ export function trainingEffect(item) {
   };
 }
 
-/** The part an item plays in a jump: 'xanax' stacks energy, 'ecstasy' doubles happy, 'happy' adds it (erotic DVD…); else null. */
+/**
+ * The part an item plays in a jump: 'xanax' stacks energy, 'ecstasy' doubles happy, 'happy' adds it
+ * (erotic DVD…); else null. Happy drugs like Shrooms don't count: they share the drug cooldown with
+ * the Xanax and Ecstasy.
+ */
 export function jumpRole(item, effect = trainingEffect(item)) {
   if (/^xanax$/i.test(item?.name ?? '')) return 'xanax';
   if (effect.doublesHappy) return 'ecstasy';
-  if (effect.jump && effect.happy) return 'happy';
+  if (effect.jump && effect.happy && item?.type !== 'Drug') return 'happy';
   return null;
 }
 
@@ -198,9 +202,9 @@ export function simulateTraining({ stat, value, happy, energy, energyPerTrain, d
   return gain;
 }
 
-/** A gym's dots for a stat. Torn's API gives them ×10 (34 for 3.4). */
+/** A gym's dots for a stat, from `/torn/gyms` `modifiers` (3.4, or ×10 as 34). */
 export function gymDots(gym, stat) {
-  const v = num(gym?.[stat] ?? gym?.stats?.[stat] ?? (stat === 'defense' ? gym?.defence : undefined));
+  const v = num(gym?.modifiers?.[stat] ?? gym?.[stat]);
   if (!v) return null;
   return v > 15 ? v / 10 : v;
 }
