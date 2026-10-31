@@ -2,11 +2,18 @@ import {
   DEFAULTS, WEEK_STATS, weekWindow, isGymLogTitle, gymSessions, dailyTotals,
   statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY,
 } from './energy.js';
-import { syncLogs, loadGyms, loadInventoryCategories, savedLogs } from './sync.js';
+import { syncLogs, loadGyms, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
 
 const ENERGY_CATEGORIES = ['Drug', 'Energy Drink', 'Booster'];
 const ENERGY_TYPES = new Set(ENERGY_CATEGORIES);
+
+/** itemId -> qty held, leaving out faction-owned items. */
+const ownedOf = (items) => {
+  const owned = new Map();
+  for (const it of items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
+  return owned;
+};
 
 /**
  * The Energy page: gym energy against a weekly target, other energy use, and a booster plan.
@@ -95,11 +102,9 @@ export function createEnergyPage(ctx) {
 
       status('Checking your Xanax and energy drinks…');
       const inv = await loadInventoryCategories(db, client, player, ENERGY_CATEGORIES, {
-        keep: (it) => ENERGY_TYPES.has(catalog.get(it.id)?.type),
         onCategory: (cat, i, n) => status(`Checking your Xanax and energy drinks… ${cat} (${i}/${n})`),
       });
-      const owned = new Map();
-      for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
+      const owned = ownedOf(inv.value.items);
 
       Object.assign(data, {
         loaded: true, live: true, now, week, bars, cooldowns, refills, gym, logs, catalog, owned,
@@ -131,11 +136,15 @@ export function createEnergyPage(ctx) {
     if (!saved) return null;
     const v = saved.value;
     const gymLogIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
-    const logs = (await savedLogs(db, player, gymLogIds)).filter((l) => l.timestamp >= v.week.start);
+    const [gymLogs, inv] = await Promise.all([savedLogs(db, player, gymLogIds),
+      savedInventory(db, player, ENERGY_CATEGORIES, { keep: (it) => ENERGY_TYPES.has(catalog.get(it.id)?.type) })]);
+    const logs = gymLogs.filter((l) => l.timestamp >= v.week.start);
     if (data.loaded) return null; // a load finished meanwhile
+    // Another page may have read the inventory since this one was saved.
+    const owned = inv && inv.at > saved.at ? ownedOf(inv.value.items) : new Map(v.owned);
     Object.assign(data, {
       loaded: true, now: saved.at, week: v.week, bars: v.bars, cooldowns: v.cooldowns, refills: v.refills, gym: v.gym,
-      logs, catalog, owned: new Map(v.owned), deltas: v.deltas, gymCost: data.gymCost ?? v.gymCost,
+      logs, catalog, owned, deltas: v.deltas, gymCost: data.gymCost ?? v.gymCost,
       sessions: gymSessions(logs, data.gymCost ?? v.gymCost),
     });
     $('#en-results').hidden = false;

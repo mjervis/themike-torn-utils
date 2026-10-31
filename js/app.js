@@ -6,7 +6,7 @@ import {
 import { openDb, STORES, meta } from './db.js';
 import {
   keyFingerprint, identify, loadCatalog, loadLogTypes, loadInventory, loadBazaar,
-  syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor, savedLogs,
+  syncLogs, backfillOlder, historyCoverage, savedSnapshots, saveSnapshotFor, savedLogs, savedInventory,
 } from './sync.js';
 import {
   buildSnapshot, rebuildSnapshots, withRebuilt, series, snapshotOnOrBefore, itemChanges, utcDate, lineChart,
@@ -276,7 +276,7 @@ async function hydrate() {
   if (!last) return {};
   await dbReady;
   const [catalog, logTypes, inv, baz] = await Promise.all([
-    meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), meta.get(state.db, `cache:inventory:${last.id}`),
+    meta.get(state.db, 'cache:catalog'), meta.get(state.db, 'cache:logtypes'), savedInventory(state.db, last.id),
     meta.get(state.db, `cache:bazaar:${last.id}`),
   ]);
   if (state.live) return {}; // a load finished meanwhile
