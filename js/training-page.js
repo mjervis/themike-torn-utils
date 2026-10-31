@@ -317,7 +317,8 @@ export function createTrainingPage(ctx) {
     const dots = gymDots(gym, stat);
     if (!last) return { stat, missing: `No ${stat} training in your gym logs to estimate gains from.` };
     if (maxHappy == null) return { stat, missing: 'Enter your max happy above to estimate gains.' };
-    if (!dots || !gym.energy_cost) return { stat, missing: 'Your gym\'s details aren\'t saved yet — Refresh to estimate gains.' };
+    if (!gym?.energy_cost) return { stat, missing: 'Your gym\'s details aren\'t saved yet — Refresh to estimate gains.' };
+    if (!dots) return { stat, missing: `${gym.name} doesn't train ${stat} — pick another stat.` };
     const jumpIds = new Set(jumps.flatMap((j) => j.sessionIds));
     const fit = calibrate(sessions.filter((x) => !jumpIds.has(x.id)), { stat, maxHappy, gymOf: (id) => data.gyms.get(id) });
     const o = { stat, value: last.before + last.gain, maxHappy, energyPerTrain: gym.energy_cost, dots, perks: fit.perks ?? 1, happyPerEnergy: fit.happyPerEnergy };
