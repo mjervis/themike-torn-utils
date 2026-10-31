@@ -4,6 +4,7 @@
 // sharing a browser never see each other's data.
 
 import { STORES, meta } from './db.js';
+import { INVENTORY_CATEGORIES, TornApiError } from './api.js';
 
 export const TTL = {
   catalog: 15 * 60,          // market values move, but not minute to minute
@@ -54,26 +55,62 @@ export function loadGyms(db, client, opts) {
   return cached(db, 'cache:gyms', TTL.logTypes, () => client.gyms(), opts);
 }
 
-export function loadInventory(db, client, player, { force, onCategory, now } = {}) {
-  return cached(db, `cache:inventory:${player}`, TTL.inventory,
-    () => client.inventory({ bypassCache: force, onCategory }), { force, now });
+/** Full inventory: every category, shared with the pages that read only a few (see loadInventoryCategories). */
+export function loadInventory(db, client, player, opts = {}) {
+  return loadInventoryCategories(db, client, player, INVENTORY_CATEGORIES, opts);
 }
 
 export function loadBazaar(db, client, player, { force, now } = {}) {
   return cached(db, `cache:bazaar:${player}`, TTL.bazaar, () => client.bazaar(), { force, now });
 }
 
+// Inventory is saved per category so every page shares one read of each: the Inventory page reads
+// them all, the Energy and Training pages only Drug, Energy Drink, Booster (and Candy).
+const inventoryKey = (player, cat) => `cache:inventory:${player}:cat:${cat}`;
+// Before v2 the full inventory was saved as one entry, and each page's categories as another.
+const legacyInventoryKey = (player) => `cache:inventory:${player}`;
+
+const combine = (entries) => ({
+  value: { items: entries.flatMap((e) => e.value) },
+  at: Math.min(...entries.map((e) => e.at)),
+});
+
 /**
- * Inventory for a few categories. Reuses the full saved inventory (filtered by `keep`) while it's
- * fresh; otherwise fetches just those categories and saves them under their own key.
+ * Inventory for the given categories. Categories saved within the TTL (by any page) are reused;
+ * only the rest are fetched, one request each, and saved for the other pages. `at` is when the
+ * oldest of them was read.
  */
-export async function loadInventoryCategories(db, client, player, categories, { keep, onCategory, now = nowSec() } = {}) {
-  const full = await meta.get(db, `cache:inventory:${player}`);
-  if (full && now - full.at < TTL.inventory) {
-    return { value: { ...full.value, items: full.value.items.filter(keep) }, at: full.at, fromCache: true };
+export async function loadInventoryCategories(db, client, player, categories, { force = false, onCategory, now = nowSec() } = {}) {
+  const saved = await Promise.all(categories.map((cat) => meta.get(db, inventoryKey(player, cat))));
+  const stale = categories.filter((cat, i) => force || !saved[i] || now - saved[i].at >= TTL.inventory);
+  let rejected = 0;
+  for (const [i, cat] of stale.entries()) {
+    onCategory?.(cat, i + 1, stale.length);
+    let items;
+    try {
+      ({ items } = await client.inventory({ categories: [cat], bypassCache: force }));
+    } catch (err) {
+      if (err.code !== 21) throw err;
+      rejected++; // category no longer exists in Torn: save it as empty
+      items = [];
+    }
+    const entry = { at: now, value: items };
+    await meta.set(db, inventoryKey(player, cat), entry);
+    saved[categories.indexOf(cat)] = entry;
   }
-  return cached(db, `cache:inventory:${player}:${categories.join(',')}`, TTL.inventory,
-    () => client.inventory({ categories, onCategory }), { now });
+  if (stale.length && rejected === categories.length) throw new TornApiError(21, 'Torn rejected every inventory category');
+  return { ...combine(saved), fromCache: !stale.length };
+}
+
+/**
+ * The inventory saved for the given categories, without any API calls, or null if none is saved.
+ * Falls back to an inventory saved before it was kept per category, filtered by `keep`.
+ */
+export async function savedInventory(db, player, categories = INVENTORY_CATEGORIES, { keep = () => true } = {}) {
+  const saved = (await Promise.all(categories.map((cat) => meta.get(db, inventoryKey(player, cat))))).filter(Boolean);
+  if (saved.length) return combine(saved);
+  const legacy = await meta.get(db, legacyInventoryKey(player));
+  return legacy ? { value: { items: legacy.value.items.filter(keep) }, at: legacy.at } : null;
 }
 
 // v2: the first release asked for every log type in one request, got nothing back from Torn and

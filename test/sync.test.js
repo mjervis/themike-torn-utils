@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { memoryDb } from '../js/db.js';
-import { syncLogs, backfillOlder, loadInventory, loadInventoryCategories, loadCatalog, identify, savedSnapshots, saveSnapshotFor } from '../js/sync.js';
+import {
+  syncLogs, backfillOlder, loadInventory, loadInventoryCategories, savedInventory, loadCatalog, identify, savedSnapshots, saveSnapshotFor,
+} from '../js/sync.js';
+import { INVENTORY_CATEGORIES } from '../js/api.js';
+import { meta } from '../js/db.js';
 
 /** Fake Torn client over a fixed set of logs, recording each call. */
 function fakeClient(allLogs) {
@@ -15,7 +19,10 @@ function fakeClient(allLogs) {
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, maxPages * 100);
     },
-    async inventory() { calls.push({ fn: 'inventory' }); return { items: [{ id: 1, amount: 2 }], timestamp: 1 }; },
+    async inventory({ categories } = {}) {
+      calls.push({ fn: 'inventory', categories });
+      return { items: categories?.[0] === 'Drug' ? [{ id: 1, amount: 2 }] : [], timestamp: 1 };
+    },
     async items() { calls.push({ fn: 'items' }); return [{ id: 1 }]; },
     async me() { calls.push({ fn: 'me' }); return { id: 42, name: 'Tester' }; },
   };
@@ -82,7 +89,7 @@ test('inventory and catalog are reused within their TTL', async () => {
   assert.equal(forced.fromCache, false);
   await loadCatalog(db, client, { now: 1000 });
   assert.equal((await loadCatalog(db, client, { now: 1100 })).fromCache, true);
-  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 3);
+  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 3 * INVENTORY_CATEGORIES.length);
 });
 
 test('player is looked up once per key fingerprint', async () => {
@@ -128,19 +135,34 @@ test('since: new types read back only to since, then incrementally; earlier sinc
   assert.equal(client.calls.length, 5, 'gap is not read twice');
 });
 
-test('category inventory reuses a fresh full inventory, else fetches and caches its own', async () => {
+test('inventory categories are shared between pages: each is read once per TTL', async () => {
   const db = memoryDb();
   const client = fakeClient([]);
-  const keep = (it) => it.id === 1;
+  const reads = () => client.calls.filter((c) => c.fn === 'inventory').map((c) => c.categories[0]);
 
   await loadInventory(db, client, 42, { now: 1000 });
-  const reused = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1500 });
+  const reused = await loadInventoryCategories(db, client, 42, ['Drug', 'Booster'], { now: 1500 });
   assert.equal(reused.fromCache, true);
-  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 1);
+  assert.deepEqual(reused.value.items, [{ id: 1, amount: 2 }]);
+  assert.equal(reads().length, INVENTORY_CATEGORIES.length);
 
-  const fetched = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1000 + 4000 });
+  // A page refreshing its few categories later only reads those, and the full inventory picks them up.
+  const fetched = await loadInventoryCategories(db, client, 42, ['Drug'], { now: 1000 + 4000 });
   assert.equal(fetched.fromCache, false);
-  const again = await loadInventoryCategories(db, client, 42, ['Drug'], { keep, now: 1000 + 4100 });
-  assert.equal(again.fromCache, true);
-  assert.equal(client.calls.filter((c) => c.fn === 'inventory').length, 2);
+  assert.deepEqual(reads().slice(INVENTORY_CATEGORIES.length), ['Drug']);
+  const full = await loadInventory(db, client, 42, { now: 1000 + 4100 });
+  assert.equal(full.at, 5000);
+  assert.ok(!reads().slice(INVENTORY_CATEGORIES.length + 1).includes('Drug'), 'Drug is not read again');
+});
+
+test('savedInventory reads shared categories without calls, falling back to the old full entry', async () => {
+  const db = memoryDb();
+  assert.equal(await savedInventory(db, 42, ['Drug']), null);
+  await meta.set(db, 'cache:inventory:42', { at: 900, value: { items: [{ id: 1, amount: 27 }, { id: 2, amount: 1 }] } });
+  const legacy = await savedInventory(db, 42, ['Drug'], { keep: (it) => it.id === 1 });
+  assert.deepEqual(legacy, { value: { items: [{ id: 1, amount: 27 }] }, at: 900 });
+
+  const client = fakeClient([]);
+  await loadInventoryCategories(db, client, 42, ['Drug'], { now: 1000 });
+  assert.deepEqual(await savedInventory(db, 42, ['Drug']), { value: { items: [{ id: 1, amount: 2 }] }, at: 1000 });
 });

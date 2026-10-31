@@ -26,7 +26,7 @@ export class TornApiError extends Error {
 }
 
 // TornInventoryItemType from the v2 spec (https://www.torn.com/swagger/openapi.json).
-const INVENTORY_CATEGORIES = [
+export const INVENTORY_CATEGORIES = [
   'Alcohol', 'Artifact', 'Book', 'Booster', 'Candy', 'Car', 'Clothing', 'Collectible',
   'Defensive', 'Drug', 'Energy Drink', 'Enhancer', 'Flower', 'Jewelry', 'Material', 'Medical',
   'Melee', 'Other', 'Plushie', 'Primary', 'Secondary', 'Special', 'Supply Pack', 'Temporary', 'Tool',

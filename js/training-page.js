@@ -1,5 +1,5 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
-import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadInventoryCategories, savedLogs } from './sync.js';
+import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
@@ -55,7 +55,7 @@ export function createTrainingPage(ctx) {
         data.gymCost = Object.fromEntries(gyms.map((g) => [g.id, g.energy_cost]));
       }
 
-      await loadStock(db, client, player, catalog);
+      await loadStock(db, client, player);
 
       const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
       const ledgerIds = ctx.ledgerLogIds();
@@ -84,18 +84,20 @@ export function createTrainingPage(ctx) {
     }
   }
 
-  /** The training consumables in your inventory, kept so the next visit can show them before any calls. */
-  async function loadStock(db, client, player, catalog) {
+  const STOCK_CATEGORIES = [...CONSUMABLE_TYPES];
+  const setStock = (inv) => {
+    const owned = new Map();
+    for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
+    Object.assign(data, { owned, stockAt: inv.at, stockError: null });
+  };
+
+  /** The training consumables in your inventory, shared with the Inventory and Energy pages' reads. */
+  async function loadStock(db, client, player) {
     status('Checking your training stock…');
     try {
-      const inv = await loadInventoryCategories(db, client, player, [...CONSUMABLE_TYPES], {
-        keep: (it) => CONSUMABLE_TYPES.has(catalog.get(it.id)?.type),
+      setStock(await loadInventoryCategories(db, client, player, STOCK_CATEGORIES, {
         onCategory: (cat, i, n) => status(`Checking your training stock… ${cat} (${i}/${n})`),
-      });
-      const owned = new Map();
-      for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
-      Object.assign(data, { owned, stockAt: inv.at, stockError: null });
-      await meta.set(db, `cache:training-stock:${player}`, { at: inv.at, value: [...owned] });
+      }));
     } catch (err) {
       if (err.fatal) throw err;
       // The cost history still works without it.
@@ -112,10 +114,10 @@ export function createTrainingPage(ctx) {
     const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
     const ids = [...ctx.ledgerLogIds(), ...gymIds];
     const [logs, cov, gyms, stock] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms'),
-      meta.get(db, `cache:training-stock:${player}`)]);
+      savedInventory(db, player, STOCK_CATEGORIES, { keep: (it) => CONSUMABLE_TYPES.has(catalog.get(it.id)?.type) })]);
     if (!logs.length || cov.newest == null || data.loaded) return null; // nothing saved, or a load started meanwhile
     data.gymCost ??= Object.fromEntries((gyms?.value ?? []).map((g) => [g.id, g.energy_cost]));
-    if (stock) Object.assign(data, { owned: new Map(stock.value), stockAt: stock.at });
+    if (stock) setStock(stock);
     Object.assign(data, { loaded: true, now: cov.newest, db, player, catalog, ids, gymIds: new Set(gymIds), logs, coverage: cov });
     $('#tr-older').hidden = cov.complete;
     $('#tr-results').hidden = false;
