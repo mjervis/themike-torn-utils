@@ -291,7 +291,7 @@ export function createTargetsPage(ctx) {
         : r.mugs ? `<span class="muted" title="Mugged in your attacks, but no mug log found for the money">${n0(r.mugs)} mug${r.mugs === 1 ? '' : 's'}</span>` : '—'}</td>
       <td>${tct(r.lastWin)}<div class="muted small">${esc(r.lastResult)}${r.respect ? ` · ${r.respect.toFixed(2)} respect` : ''}</div></td>
       <td class="num">${r.ff == null ? '—' : r.ff.toFixed(2)}</td>
-      <td><a class="button" href="https://www.torn.com/loader.php?sid=attack&amp;user2ID=${r.id}" target="_blank" rel="noopener">Attack</a></td>
+      <td><a class="button" href="https://www.torn.com/page.php?sid=attack&amp;user2ID=${r.id}" target="_blank" rel="noopener">Attack</a></td>
     </tr>`;
   }
 
