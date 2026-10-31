@@ -11,6 +11,7 @@ export const TTL = {
   logTypes: 7 * 24 * 3600,   // practically static
   inventory: 60 * 60,        // Torn caches inventory for an hour per category anyway
   bazaar: 5 * 60,            // listings sell, so not for long; Update always re-reads it
+  bars: 60,                  // energy and happy tick up every few minutes
 };
 
 // Re-read a little before the last sync point so logs written late aren't missed; ids de-duplicate.
@@ -58,6 +59,11 @@ export function loadGyms(db, client, opts) {
 /** Full inventory: every category, shared with the pages that read only a few (see loadInventoryCategories). */
 export function loadInventory(db, client, player, opts = {}) {
   return loadInventoryCategories(db, client, player, INVENTORY_CATEGORIES, opts);
+}
+
+/** Energy, happy and other bars, shared by the pages that need them; they change by the minute. */
+export function loadBars(db, client, player, opts) {
+  return cached(db, `cache:bars:${player}`, TTL.bars, () => client.bars(), opts);
 }
 
 export function loadBazaar(db, client, player, { force, now } = {}) {

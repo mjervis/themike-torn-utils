@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, trainingTotals, weeklyTraining, jumpRole, planJumps, stockLevels,
+  trainGain, simulateTraining, gymDots, calibrate, jumpGain,
 } from '../js/training.js';
 import { statGain } from '../js/energy.js';
 
@@ -141,4 +142,44 @@ test('stockLevels shows how long stock lasts at the recent rate', () => {
   assert.equal(rows[0].daysLeft, 12);
   assert.equal(rows[1].daysLeft, null);
   assert.equal(rows[2].qty, 0);
+});
+
+test('planJumps can pack happy items into fewer jumps instead of spreading them', () => {
+  const { jumps } = planJumps(jumpItems({ xanax: 8, ecstasy: 2, dvd: 4 }), { boosterCapHours: 24, spread: 'fill' });
+  assert.deepEqual(jumps.map((j) => j.happy), [10000, 0]);
+});
+
+test('trainGain follows the gym formula and grows with happy', () => {
+  // 10,000 strength at 5,000 happy, 1 dot, 10E: (10000×1.2131 + 8×5000^1.05 + (1−(5000/99999)²)×1600 + 1700) × 10/200000
+  const g = trainGain({ stat: 'strength', value: 10000, happy: 5000, energy: 10, dots: 1 });
+  assert.ok(Math.abs(g - 3.83) < 0.01, `got ${g}`); // (12,131 + 61,264 + 1,596 + 1,700) × 10 / 200,000
+  assert.ok(trainGain({ stat: 'strength', value: 10000, happy: 20000, energy: 10, dots: 1 }) > 3 * g);
+  assert.ok(Math.abs(trainGain({ stat: 'strength', value: 10000, happy: 5000, energy: 10, dots: 3.4 }) - 3.4 * g) < 1e-9);
+});
+
+test('gymDots reads the API\'s ×10 dots', () => {
+  assert.equal(gymDots({ strength: 34 }, 'strength'), 3.4);
+  assert.equal(gymDots({ defense: 5 }, 'defense'), 5);
+  assert.equal(gymDots({}, 'speed'), null);
+});
+
+test('calibrate fits perks so the formula matches your own sessions', () => {
+  const gym = { id: 9, energy_cost: 10, defense: 40 };
+  const actual = 1.25 * simulateTraining({ stat: 'defense', value: 13000, happy: 5000, energy: 150, energyPerTrain: 10, dots: 4, happyPerEnergy: 0.5 });
+  const sessions = [
+    { id: 1, timestamp: 100, stat: 'defense', before: 13000, gain: actual, trains: 15, energy: 150, happy: 75, gym: 9 },
+    { id: 2, timestamp: 50, stat: 'speed', before: 9000, gain: 50, trains: 15, energy: 150, happy: 75, gym: 9 },
+  ];
+  const fit = calibrate(sessions, { stat: 'defense', maxHappy: 5000, gymOf: () => gym });
+  assert.ok(Math.abs(fit.perks - 1.25) < 1e-9);
+  assert.equal(fit.sessions, 1);
+  assert.equal(fit.happyPerEnergy, 0.5);
+  assert.equal(calibrate([], { stat: 'defense', maxHappy: 5000, gymOf: () => gym }).perks, null);
+});
+
+test('jumpGain doubles happy with Ecstasy and beats training normally', () => {
+  const [jump] = planJumps(jumpItems({ xanax: 4, ecstasy: 1, dvd: 2 }), { boosterCapHours: 24 }).jumps;
+  const est = jumpGain(jump, { stat: 'strength', value: 20000, maxHappy: 5000, energyPerTrain: 10, dots: 4, perks: 1.2, happyPerEnergy: 0.5 });
+  assert.equal(est.happy, 20000);
+  assert.ok(est.gain > 2 * est.normal);
 });

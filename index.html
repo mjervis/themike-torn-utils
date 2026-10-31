@@ -270,10 +270,21 @@
         </div>
 
         <h2 class="section-title">Suggested jumps</h2>
+        <div class="settings-grid">
+          <label>Stat to train
+            <select id="tr-stat">
+              <option value="strength">Strength</option><option value="speed">Speed</option>
+              <option value="defense">Defense</option><option value="dexterity">Dexterity</option>
+            </select>
+          </label>
+          <label>Max happy (blank = from Torn)
+            <input id="tr-happy" type="number" min="0" max="99999" step="50" placeholder="from Torn">
+          </label>
+        </div>
         <div class="cards" id="tr-plan-cards"></div>
         <div class="table-wrap">
           <table id="tr-plan">
-            <thead><tr><th>Jump</th><th>Use</th><th class="num">Happy added</th><th class="num">From stock</th><th class="num">To buy</th><th>Optional top-up</th></tr></thead>
+            <thead><tr><th>Jump</th><th>Use</th><th class="num">Trains at happy</th><th class="num">Est. gain</th><th class="num">vs normal</th><th class="num">From stock</th><th class="num">To buy</th><th>Optional top-up</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -312,8 +323,11 @@
         <p class="footnote"><strong>Stock</strong> is the Drug, Energy Drink, Booster and Candy items in your inventory, valued at market price; <em>Used</em>, <em>Per week</em> and <em>Lasts</em> follow the range above.
           <strong>Suggested jumps</strong> each stack 4 Xanax to 1,000 energy, use as many happy items (erotic DVDs etc.) as your booster cooldown limit allows — set on the Energy page —
           then Ecstasy to double your happy, and train it all straight away. Stock is used first; anything short is bought at the cheapest market price.
-          Happy items are spread evenly across the jumps, because gym gains grow with the log of happy: two middling jumps gain more than one big jump and one bare one.
-          Xanax and Ecstasy share the drug cooldown and carry an overdose risk.</p>
+          Xanax and Ecstasy share the drug cooldown and carry an overdose risk.
+          <strong>Estimated gains</strong> use the community fit of Torn's gym formula (Vladar's) for your current stat, gym and happy, with your perks
+          (faction, education, property, books) fitted to your recent ordinary sessions of that stat, taken as trained at max happy.
+          <em>vs normal</em> compares with training the same 1,000 energy at max happy. Torn adds some randomness, so treat them as a guide.
+          Whether happy items go further spread evenly or packed into fewer jumps depends on your stats, so the plan uses whichever estimates more gain.</p>
       </section>
     </div>
 

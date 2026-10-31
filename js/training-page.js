@@ -1,9 +1,9 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
-import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
+import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
-  weeklyTraining, trainingTotals, jumpRole, planJumps, stockLevels,
+  weeklyTraining, trainingTotals, jumpRole, planJumps, stockLevels, calibrate, gymDots, jumpGain,
 } from './training.js';
 
 /**
@@ -24,12 +24,18 @@ export function createTrainingPage(ctx) {
     const el = value && document.querySelector(`input[name=${name}][value="${value}"]`);
     if (el) el.checked = true;
   }
+  if (saved.stat) $('#tr-stat').value = saved.stat;
+  if (saved.happy) $('#tr-happy').value = saved.happy;
   const read = () => ({
     range: document.querySelector('input[name=tr-range]:checked').value,
     valueAt: document.querySelector('input[name=tr-value]:checked').value,
+    // Until one is picked, the plan estimates for the stat you trained last.
+    stat: store.get('training', {}).stat ?? null,
+    happy: Number($('#tr-happy').value) || null,
   });
-  document.querySelectorAll('input[name=tr-range], input[name=tr-value]').forEach((el) =>
+  document.querySelectorAll('input[name=tr-range], input[name=tr-value], #tr-happy').forEach((el) =>
     el.addEventListener('change', () => { store.set('training', read()); render(); }));
+  $('#tr-stat').addEventListener('change', () => { store.set('training', { ...read(), stat: $('#tr-stat').value }); render(); });
   $('#tr-refresh').addEventListener('click', () => load());
   $('#tr-older').addEventListener('click', () => readOlder());
 
@@ -50,10 +56,9 @@ export function createTrainingPage(ctx) {
         status('No item use log types are ticked — pick them under Settings → Item use log types.', true);
         return;
       }
-      if (!data.gymCost) {
-        const gyms = (await loadGyms(db, client).catch(() => null))?.value ?? [];
-        data.gymCost = Object.fromEntries(gyms.map((g) => [g.id, g.energy_cost]));
-      }
+      if (!data.gyms) setGyms((await loadGyms(db, client).catch(() => null))?.value);
+      // Max happy, for the jump estimates; shared with the Energy page's read.
+      data.bars = (await loadBars(db, client, player).catch((err) => { if (err.fatal) throw err; return null; }))?.value ?? data.bars;
 
       await loadStock(db, client, player);
 
@@ -84,6 +89,11 @@ export function createTrainingPage(ctx) {
     }
   }
 
+  const setGyms = (gyms) => {
+    data.gyms = new Map((gyms ?? []).map((g) => [g.id, g]));
+    data.gymCost = Object.fromEntries((gyms ?? []).map((g) => [g.id, g.energy_cost]));
+  };
+
   const STOCK_CATEGORIES = [...CONSUMABLE_TYPES];
   const setStock = (inv) => {
     const owned = new Map();
@@ -113,10 +123,12 @@ export function createTrainingPage(ctx) {
     if (data.loaded || !ctx.hasUseTypes()) return null;
     const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
     const ids = [...ctx.ledgerLogIds(), ...gymIds];
-    const [logs, cov, gyms, stock] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms'),
-      savedInventory(db, player, STOCK_CATEGORIES, { keep: (it) => CONSUMABLE_TYPES.has(catalog.get(it.id)?.type) })]);
+    const [logs, cov, gyms, stock, bars, energy] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms'),
+      savedInventory(db, player, STOCK_CATEGORIES, { keep: (it) => CONSUMABLE_TYPES.has(catalog.get(it.id)?.type) }),
+      meta.get(db, `cache:bars:${player}`), meta.get(db, `cache:energy:${player}`)]);
     if (!logs.length || cov.newest == null || data.loaded) return null; // nothing saved, or a load started meanwhile
-    data.gymCost ??= Object.fromEntries((gyms?.value ?? []).map((g) => [g.id, g.energy_cost]));
+    if (!data.gyms) setGyms(gyms?.value);
+    data.bars ??= bars?.value ?? energy?.value.bars ?? null;
     if (stock) setStock(stock);
     Object.assign(data, { loaded: true, now: cov.newest, db, player, catalog, ids, gymIds: new Set(gymIds), logs, coverage: cov });
     $('#tr-older').hidden = cov.complete;
@@ -179,7 +191,8 @@ export function createTrainingPage(ctx) {
     const ledger = ctx.ledgerFor(logs);
     const allUses = costUses(ledger.uses.filter((u) => CONSUMABLE_TYPES.has(catalog.get(u.itemId)?.type)), price, s.valueAt);
     const allSessions = gymSessions(logs.filter((l) => data.gymIds.has(l.details?.id)), data.gymCost ?? {});
-    const jumps = detectJumps(allUses, trainingBursts(allSessions), effectOf).filter((j) => j.start >= from);
+    const allJumps = detectJumps(allUses, trainingBursts(allSessions), effectOf);
+    const jumps = allJumps.filter((j) => j.start >= from);
     const uses = allUses.filter((u) => u.timestamp >= from);
     const sessions = allSessions.filter((x) => x.timestamp >= from);
     const totals = trainingTotals({ uses, sessions, jumps });
@@ -195,7 +208,7 @@ export function createTrainingPage(ctx) {
 
     const days = (now - (s.range === 'all' ? Math.min(now, ...allUses.map((u) => u.timestamp)) : from)) / 86400;
     renderStock(data.owned ? stockLevels(data.owned, uses, days) : null, effectOf, price);
-    renderPlan(effectOf, price, energy.boosterCapHours ?? DEFAULTS.boosterCapHours);
+    renderPlan(effectOf, price, energy.boosterCapHours ?? DEFAULTS.boosterCapHours, estimator(allSessions, allJumps, s));
   }
 
   function renderCards(t, sessions, s, src) {
@@ -288,7 +301,33 @@ export function createTrainingPage(ctx) {
 
   const partLabel = (p) => [p.stock && `${n0(p.stock)}× ${p.item.name}`, p.buy && `buy ${n0(p.buy)}× ${p.item.name}`].filter(Boolean).join(' + ');
 
-  function renderPlan(effectOf, price, boosterCapHours) {
+  /**
+   * What the jump estimates need — your current stat, gym and max happy — with perks fitted to your
+   * ordinary training. Returns { stat, estimate(jump), … }, or { stat, missing } saying what's absent.
+   */
+  function estimator(sessions, jumps, s) {
+    const latest = [...sessions].sort((a, b) => b.timestamp - a.timestamp);
+    const stat = s.stat ?? jumps[0]?.stats[0] ?? latest.find((x) => x.stat)?.stat ?? 'strength';
+    $('#tr-stat').value = stat;
+    const maxHappy = s.happy ?? data.bars?.happy?.maximum ?? null;
+    $('#tr-happy').placeholder = data.bars?.happy?.maximum ? `${data.bars.happy.maximum} from Torn` : 'from Torn';
+    const last = latest.find((x) => x.stat === stat && x.before != null && x.gain != null);
+    // You train where you last trained.
+    const gym = data.gyms?.get(latest.find((x) => x.gym != null)?.gym);
+    const dots = gymDots(gym, stat);
+    if (!last) return { stat, missing: `No ${stat} training in your gym logs to estimate gains from.` };
+    if (maxHappy == null) return { stat, missing: 'Enter your max happy above to estimate gains.' };
+    if (!dots || !gym.energy_cost) return { stat, missing: 'Your gym\'s details aren\'t saved yet — Refresh to estimate gains.' };
+    const jumpIds = new Set(jumps.flatMap((j) => j.sessionIds));
+    const fit = calibrate(sessions.filter((x) => !jumpIds.has(x.id)), { stat, maxHappy, gymOf: (id) => data.gyms.get(id) });
+    const o = { stat, value: last.before + last.gain, maxHappy, energyPerTrain: gym.energy_cost, dots, perks: fit.perks ?? 1, happyPerEnergy: fit.happyPerEnergy };
+    return { ...o, gym, fit, estimate: (jump) => jumpGain(jump, o) };
+  }
+
+  /** Market value of a jump's Ecstasy and happy items: what the jump costs over training normally. */
+  const happyCost = (j) => j.parts.filter((p) => p.item.role !== 'xanax').reduce((t, p) => t + (p.stock + p.buy) * (p.item.price ?? 0), 0);
+
+  function renderPlan(effectOf, price, boosterCapHours, est) {
     const items = [...data.catalog.values()]
       .filter((i) => CONSUMABLE_TYPES.has(i.type))
       .map((i) => {
@@ -296,30 +335,59 @@ export function createTrainingPage(ctx) {
         return { id: i.id, name: i.name, role: jumpRole(i, e), happy: e.happy, cooldownHours: e.cooldownHours, price: price(i.id), qty: data.owned?.get(i.id) ?? 0 };
       })
       .filter((i) => i.role);
-    const { jumps, more, full, leftover } = planJumps(items, { boosterCapHours });
+    // Spread happy items evenly or pack them into fewer jumps, whichever is estimated to gain more.
+    const plans = (est.estimate ? ['even', 'fill'] : ['even']).map((spread) => {
+      const p = planJumps(items, { boosterCapHours, spread });
+      for (const j of p.jumps) j.est = est.estimate?.(j);
+      return { ...p, spread, gain: p.jumps.reduce((t, j) => t + (j.est?.gain ?? 0), 0) };
+    });
+    const plan = plans.reduce((a, b) => (b.gain > a.gain ? b : a));
+    const { jumps, more, full, leftover } = plan;
     const fromStock = jumps.filter((j) => !j.buyCost).length;
     const stockValue = jumps.reduce((t, j) => t + j.stockValue, 0);
     const buyCost = jumps.reduce((t, j) => t + j.buyCost, 0);
+    const gain = plan.gain;
+    const normal = jumps.reduce((t, j) => t + (j.est?.normal ?? 0), 0);
+    const extraCost = jumps.reduce((t, j) => t + happyCost(j), 0);
+    const fullEst = est.estimate && full.parts.length ? est.estimate(full) : null;
 
     $('#tr-plan-cards').innerHTML = `
       <div class="card"><div class="label">Jumps from stock</div><div class="value">${n0(fromStock)}<span class="of"> of ${n0(jumps.length + more)}</span></div>
         <div class="sub">${data.owned ? `with nothing to buy · booster limit ${n0(boosterCapHours)}h` : 'stock not read yet'}</div></div>
+      <div class="card"><div class="label">Estimated gain</div><div class="value">${est.estimate && jumps.length ? n0(gain) : '—'}</div>
+        <div class="sub">${est.estimate ? (jumps.length ? `${esc(est.stat)} · ×${ratio(gain / normal)} training normally (${n0(normal)})` : 'nothing planned') : esc(est.missing)}</div></div>
+      <div class="card"><div class="label">Cost per extra stat</div><div class="value">${est.estimate && gain > normal ? money(extraCost / (gain - normal)) : '—'}</div>
+        <div class="sub">Ecstasy and happy items at market, over the gain of training normally</div></div>
       <div class="card"><div class="label">Stock used</div><div class="value">${money(stockValue)}</div><div class="sub">at market value</div></div>
       <div class="card"><div class="label">Still to buy</div><div class="value">${money(buyCost)}</div>
         <div class="sub">${jumps.length ? `to finish ${n0(jumps.length - fromStock)} jump${jumps.length - fromStock === 1 ? '' : 's'}` : 'nothing planned'}</div></div>
       <div class="card"><div class="label">Full jump at market</div><div class="value">${full.parts.length ? money(full.buyCost) : '—'}</div>
-        <div class="sub">${esc(full.parts.map((p) => `${p.buy}× ${p.item.name}`).join(', '))}</div></div>`;
+        <div class="sub">${esc(full.parts.map((p) => `${p.buy}× ${p.item.name}`).join(', '))}${fullEst ? ` · ≈ ${n0(fullEst.gain)} ${esc(est.stat)}` : ''}</div></div>`;
 
-    $('#tr-plan tbody').innerHTML = jumps.map((j, i) => `<tr>
+    $('#tr-plan tbody').innerHTML = jumps.map((j, i) => {
+      const topUpGain = j.topUp && est.estimate ? est.estimate({ ...j, happy: j.happy + j.topUp.happy }).gain - j.est.gain : null;
+      return `<tr>
         <td>${i + 1}</td>
         <td class="wrap">${esc(j.parts.map(partLabel).join(', '))}</td>
-        <td class="num">${j.happy ? `+${n0(j.happy)}` : '—'}${j.parts.some((p) => p.item.role === 'ecstasy') ? ' <span class="muted">then ×2</span>' : ''}</td>
+        <td class="num">${j.est ? n0(j.est.happy) : `${j.happy ? `+${n0(j.happy)}` : '—'}${j.parts.some((p) => p.item.role === 'ecstasy') ? ' <span class="muted">then ×2</span>' : ''}`}</td>
+        <td class="num">${j.est ? n0(j.est.gain) : '—'}</td>
+        <td class="num">${j.est?.normal ? `×${ratio(j.est.gain / j.est.normal)}` : '—'}</td>
         <td class="num">${money(j.stockValue)}</td>
         <td class="num">${j.buyCost ? money(j.buyCost) : '<span class="tag found">nothing</span>'}</td>
-        <td class="muted">${j.topUp ? `${n0(j.topUp.qty)}× ${esc(j.topUp.item.name)} (+${n0(j.topUp.happy)} happy) for ${money(j.topUp.cost)}` : ''}</td>
-      </tr>`).join('') || `<tr><td colspan="6" class="muted">${data.owned ? 'No Xanax, Ecstasy or big happy items in stock to plan a jump around.' : 'Refresh to read your stock from Torn.'}</td></tr>`;
+        <td class="muted">${j.topUp ? `${n0(j.topUp.qty)}× ${esc(j.topUp.item.name)} for ${money(j.topUp.cost)}${topUpGain != null ? ` · +${n0(topUpGain)} ${esc(est.stat)}` : ` (+${n0(j.topUp.happy)} happy)`}` : ''}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="8" class="muted">${data.owned ? 'No Xanax, Ecstasy or big happy items in stock to plan a jump around.' : 'Refresh to read your stock from Torn.'}</td></tr>`;
 
     const notes = [];
+    if (est.estimate) {
+      notes.push(`Estimates for ${est.stat} from ${n0(est.value)} at ${est.gym.name ?? `gym ${est.gym.id}`} (${est.dots} dots, ${est.energyPerTrain}E a train), max happy ${n0(est.maxHappy)};`
+        + (est.fit.perks != null ? ` perks ×${est.fit.perks.toFixed(2)}, fitted to your last ${est.fit.sessions} ordinary ${est.stat} session${est.fit.sessions === 1 ? '' : 's'}.`
+          : ` no ordinary ${est.stat} sessions to fit your perks to, so none are included.`));
+      const other = plans.find((p) => p !== plan);
+      if (other && Math.round(plan.gain) > Math.round(other.gain)) {
+        notes.push(`${plan.spread === 'fill' ? 'Packing happy items into fewer jumps' : 'Spreading happy items evenly'} is estimated to gain ${n0(plan.gain - other.gain)} more than ${plan.spread === 'fill' ? 'spreading them evenly' : 'packing them into fewer jumps'}.`);
+      }
+    }
     if (more) notes.push(`Your stock would stretch to ${n0(more)} more jump${more === 1 ? '' : 's'} after these.`);
     if (leftover.length) notes.push(`Left over: ${leftover.map((l) => `${n0(l.qty)}× ${l.item.name}`).join(', ')}.`);
     $('#tr-plan-note').textContent = notes.join(' ');
