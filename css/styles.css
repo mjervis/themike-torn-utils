@@ -269,3 +269,6 @@ a.button:hover { background: var(--accent); }
   .key-form input[type=password] { width: 100%; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Halloween page */
+pre.raw { max-height: 320px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; }

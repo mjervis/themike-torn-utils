@@ -17,6 +17,7 @@
       <a href="#training" data-page="training">Training cost</a>
       <a href="#targets" data-page="targets">Targets</a>
       <a href="#chain" data-page="chain">Chain</a>
+      <a href="#halloween" data-page="halloween">Halloween</a>
       <a href="#settings" data-page="settings">Settings</a>
     </nav>
   </header>
@@ -430,6 +431,63 @@
       </section>
     </div>
 
+    <div id="page-halloween" class="page" hidden>
+      <div class="toolbar">
+        <div class="filters">
+          <label class="check">Your event start (25 Oct, TCT) <input id="hw-start" type="time" value="11:30"></label>
+        </div>
+        <div class="routes" role="radiogroup" aria-label="Count">
+          <span>Count:</span>
+          <label><input type="radio" name="hw-count" value="all" checked> All attacks you started</label>
+          <label><input type="radio" name="hw-count" value="wins"> Wins only</label>
+        </div>
+      </div>
+
+      <section id="hw-results" hidden>
+        <p id="hw-notice" class="notice" role="note" hidden></p>
+        <div class="toolbar">
+          <span class="muted" id="hw-asof"></span>
+          <button id="hw-refresh" type="button">Refresh</button>
+        </div>
+        <div class="cards" id="hw-cards"></div>
+
+        <h2 class="section-title">Treats per attack</h2>
+        <div class="table-wrap">
+          <table id="hw-dist">
+            <thead><tr><th class="num">Treats</th><th class="num">Attacks</th><th class="num">% of attacks</th><th class="num">% of treat attacks</th><th class="num">At least this many</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">By day <span class="small">(TCT)</span></h2>
+        <div class="table-wrap">
+          <table id="hw-days">
+            <thead><tr><th>Day</th><th class="num">Attacks</th><th class="num">Got a treat</th><th class="num">Multiplied (2+)</th><th class="num">Treats</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">Latest attacks</h2>
+        <div class="table-wrap">
+          <table id="hw-recent">
+            <thead><tr><th>When (TCT)</th><th>Player</th><th>Result</th><th class="num">Treats</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <details class="panel">
+          <summary>Raw treat logs <span class="muted" id="hw-raw-count"></span></summary>
+          <p class="hint">The five most recent treat logs as Torn sent them, and how many treats each was read as.</p>
+          <pre id="hw-raw" class="raw"></pre>
+        </details>
+
+        <p class="footnote">The event runs for a week from your own start time on 25 Oct to the same time on 1 Nov. Attacks are every attack you started in that week, from the same saved attack history as the Targets page.
+          Treats come from your treat logs (Settings → Treat log types): each log is matched to your attack that ended nearest to it, within two minutes, and on the same player if the log names one.
+          A log that doesn't say how many treats counts as one; several logs on the same attack add up, so a Doubler shows as 2, a Doubler with a Tripler as 6.
+          “At least this many” is the share of all attacks that got that many treats or more.</p>
+      </section>
+    </div>
+
     <div id="page-settings" class="page" hidden>
       <section class="panel key-panel">
         <h2>Torn API key</h2>
@@ -545,6 +603,11 @@
           <legend>Mug log types</legend>
           <p class="hint">Mugs you made, read by the Targets page for how much you've mugged each player. Don't tick types for being mugged yourself.</p>
           <div id="mug-types" class="log-types"><em>Load once to see available log types.</em></div>
+        </fieldset>
+        <fieldset>
+          <legend>Treat log types</legend>
+          <p class="hint">Halloween Trick or Treat treats you collected from attacks, read by the Halloween page.</p>
+          <div id="treat-types" class="log-types"><em>Load once to see available log types.</em></div>
         </fieldset>
         <fieldset>
           <legend>Your saved data</legend>
