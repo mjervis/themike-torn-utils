@@ -53,7 +53,8 @@ export function gymSessions(logs, gymCost = {}) {
     let energy = num(d.energy_used ?? d.energy ?? d.energy_spent);
     if (energy == null && trains != null && gymCost[d.gym]) energy = trains * gymCost[d.gym];
     const stat = (l.details?.title ?? '').match(/strength|speed|defen[cs]e|dexterity/i)?.[0]?.toLowerCase() ?? null;
-    return { id: l.id, timestamp: l.timestamp, energy, stat, trains, gain: statGain(d), happy: num(d.happy_used ?? d.happy) };
+    const before = stat && num(d[`${stat}_before`] ?? (stat === 'defense' ? d.defence_before : undefined));
+    return { id: l.id, timestamp: l.timestamp, energy, stat, trains, gain: statGain(d), happy: num(d.happy_used ?? d.happy), before, gym: d.gym ?? null };
   });
 }
 

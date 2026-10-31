@@ -2,7 +2,7 @@ import {
   DEFAULTS, WEEK_STATS, weekWindow, isGymLogTitle, gymSessions, dailyTotals,
   statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY,
 } from './energy.js';
-import { syncLogs, loadGyms, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
+import { syncLogs, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
 
 const ENERGY_CATEGORIES = ['Drug', 'Energy Drink', 'Booster'];
@@ -80,7 +80,7 @@ export function createEnergyPage(ctx) {
       const logTypes = await ctx.logTypes();
 
       status('Loading energy, cooldowns and refills…');
-      const bars = await client.bars();
+      const bars = (await loadBars(db, client, player)).value;
       const cooldowns = await client.cooldowns();
       const refills = await client.refills();
       const gym = await client.gym().catch(() => null);

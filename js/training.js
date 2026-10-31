@@ -18,6 +18,10 @@ export const MAX_STACK = 72 * HOUR;
 
 /** Xanax stacked for a jump: 4 × 250 reaches Torn's 1,000 energy limit for stacking over max. */
 export const STACK_XANAX = 4;
+/** Energy a jump trains: the Xanax stack. */
+export const JUMP_ENERGY = STACK_XANAX * XANAX_ENERGY;
+/** Torn's ceiling on happy. */
+const MAX_HAPPY = 99999;
 /** Booster cooldown assumed for a happy item whose effect text doesn't say (an erotic DVD's is 6h). */
 const HAPPY_COOLDOWN = 6;
 
@@ -61,16 +65,16 @@ export function jumpRole(item, effect = trainingEffect(item)) {
  * Jumps that make the most of what you hold. Each stacks `STACK_XANAX` Xanax, uses as many happy
  * items as the booster cooldown limit allows, then Ecstasy to double the happy, and trains.
  * Stock is used before anything is bought, and as many jumps are planned as it takes to use up
- * the jump items held. Happy items are spread evenly rather than piled into the first jump: gains
- * rise with the log of happy, so two middling jumps beat one big one and one bare one.
+ * the jump items held. Happy items are spread evenly across the jumps, or with `spread: 'fill'`
+ * each jump gets as many as fit before the next — which wins depends on your stats (see jumpGain).
  *
  * @param {object[]} items  jump items from the catalogue: { id, name, role, happy, cooldownHours, price, qty }
- * @param {{ boosterCapHours: number, maxJumps?: number }} o
+ * @param {{ boosterCapHours: number, maxJumps?: number, spread?: 'even'|'fill' }} o
  * @returns {{ jumps: object[], more: number, full: object, leftover: { item, qty }[] }}
  *   jumps: { parts: [{ item, stock, buy }], happy, buyCost, stockValue, topUp: { item, qty, cost }|null }
  *   full: the parts and cost of one jump bought entirely at market, for reference
  */
-export function planJumps(items, { boosterCapHours, maxJumps = 10 }) {
+export function planJumps(items, { boosterCapHours, maxJumps = 10, spread = 'even' }) {
   const of = (role) => items.filter((i) => i.role === role);
   const cheapest = (list, by = (i) => i.price) => list.filter((i) => i.price).sort((a, b) => by(a) - by(b))[0] ?? null;
   const buyXanax = cheapest(of('xanax'));
@@ -92,10 +96,12 @@ export function planJumps(items, { boosterCapHours, maxJumps = 10 }) {
   const n = Math.min(needed, maxJumps);
 
   const jumps = Array.from({ length: n }, () => ({ happyItems: [], hours: 0, happy: 0 }));
-  // Biggest happy items first, each to the jump with the least happy that still has booster room.
+  // Biggest happy items first, each to the jump with the least happy that still has booster room
+  // ('even'), or filling each jump before the next ('fill').
   const unplacedHappy = [];
   for (const unit of happyUnits) {
-    const j = jumps.filter((x) => fits(x.hours, unit)).sort((a, b) => a.happy - b.happy)[0];
+    const room = jumps.filter((x) => fits(x.hours, unit));
+    const j = spread === 'fill' ? room[0] : room.sort((a, b) => a.happy - b.happy)[0];
     if (!j) { unplacedHappy.push(unit); continue; }
     j.happyItems.push(unit);
     j.hours += cd(unit);
@@ -161,6 +167,84 @@ export function planJumps(items, { boosterCapHours, maxJumps = 10 }) {
       buyCost: fullParts.reduce((t, p) => t + p.buy * p.item.price, 0),
     },
     leftover: [...leftover].map(([item, qty]) => ({ item, qty })),
+  };
+}
+
+// ---------- estimated gains ----------
+// Vladar's fit of Torn's gym formula, the one the community calculators use. Perks (faction,
+// education, property, books) aren't readable from the API, so they're fitted to your own logs.
+
+/** [A, B] per stat in the gym formula. */
+const STAT_CONSTANTS = { strength: [1600, 1700], speed: [1600, 2000], defense: [2100, -600], dexterity: [1800, 1500] };
+export const BATTLE_STATS = Object.keys(STAT_CONSTANTS);
+const round4 = (x) => Math.round(x * 1e4) / 1e4;
+
+/** Stat gained by one train, before perks. `dots` is the gym's dots for the stat (e.g. 3.4). */
+export function trainGain({ stat, value, happy, energy, dots }) {
+  const [a, b] = STAT_CONSTANTS[stat];
+  // Gains slow sharply above 50M.
+  const s = value > 5e7 ? (value - 5e7) / (8.77635 * Math.log10(value)) + 5e7 : value;
+  const h = Math.min(MAX_HAPPY, Math.max(0, happy));
+  return (s * round4(1 + 0.07 * round4(Math.log(1 + h / 250))) + 8 * h ** 1.05 + (1 - (h / MAX_HAPPY) ** 2) * a + b) * dots * energy / 200000;
+}
+
+/** Stats gained training `energy` in one go, happy falling by `happyPerEnergy` with each train. */
+export function simulateTraining({ stat, value, happy, energy, energyPerTrain, dots, perks = 1, happyPerEnergy = 0.5 }) {
+  let gain = 0;
+  for (let i = 0; i < Math.floor(energy / energyPerTrain); i++) {
+    gain += perks * trainGain({ stat, value: value + gain, happy, energy: energyPerTrain, dots });
+    happy -= happyPerEnergy * energyPerTrain;
+  }
+  return gain;
+}
+
+/** A gym's dots for a stat. Torn's API gives them ×10 (34 for 3.4). */
+export function gymDots(gym, stat) {
+  const v = num(gym?.[stat] ?? gym?.stats?.[stat] ?? (stat === 'defense' ? gym?.defence : undefined));
+  if (!v) return null;
+  return v > 15 ? v / 10 : v;
+}
+
+/**
+ * Fit the formula to your ordinary training of a stat: the perks multiplier that makes it match
+ * your gains, taking those sessions to start at max happy. Jump sessions should be left out.
+ * @param {object[]} sessions  gym sessions (energy.js gymSessions), any order
+ * @param {{ stat: string, maxHappy: number, gymOf: (id: number) => object|undefined, recent?: number }} o
+ * @returns {{ perks: number|null, happyPerEnergy: number, sessions: number }}
+ */
+export function calibrate(sessions, { stat, maxHappy, gymOf, recent = 20 }) {
+  const withHappy = sessions.filter((s) => s.happy != null && s.energy);
+  const happyEnergy = withHappy.reduce((t, s) => t + s.energy, 0);
+  const happyPerEnergy = happyEnergy ? withHappy.reduce((t, s) => t + s.happy, 0) / happyEnergy : 0.5;
+  const usable = sessions
+    .filter((s) => s.stat === stat && s.before != null && s.gain > 0 && s.trains > 0 && s.energy > 0 && gymDots(gymOf(s.gym), stat))
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, recent);
+  let actual = 0;
+  let predicted = 0;
+  for (const s of usable) {
+    actual += s.gain;
+    predicted += simulateTraining({
+      stat, value: s.before, happy: maxHappy, energy: s.energy, energyPerTrain: s.energy / s.trains,
+      dots: gymDots(gymOf(s.gym), stat), happyPerEnergy: s.happy != null ? s.happy / s.energy : happyPerEnergy,
+    });
+  }
+  return { perks: predicted ? actual / predicted : null, happyPerEnergy, sessions: usable.length };
+}
+
+/**
+ * Estimated stats from a planned jump, and from training the same energy at max happy instead.
+ * @param {object} jump  from planJumps
+ * @param {{ stat, value, maxHappy, energyPerTrain, dots, perks, happyPerEnergy }} o
+ * @returns {{ gain: number, normal: number, happy: number }}  happy: what training starts at
+ */
+export function jumpGain(jump, { maxHappy, ...o }) {
+  const doubled = jump.parts.some((p) => p.item.role === 'ecstasy');
+  const happy = Math.min(MAX_HAPPY, (maxHappy + jump.happy) * (doubled ? 2 : 1));
+  return {
+    gain: simulateTraining({ ...o, happy, energy: JUMP_ENERGY }),
+    normal: simulateTraining({ ...o, happy: maxHappy, energy: JUMP_ENERGY }),
+    happy,
   };
 }
 
