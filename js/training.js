@@ -16,6 +16,11 @@ export const JUMP_LEAD = HOUR;
 /** Stacking further back than this from a jump isn't counted towards it. */
 export const MAX_STACK = 72 * HOUR;
 
+/** Xanax stacked for a jump: 4 × 250 reaches Torn's 1,000 energy limit for stacking over max. */
+export const STACK_XANAX = 4;
+/** Booster cooldown assumed for a happy item whose effect text doesn't say (an erotic DVD's is 6h). */
+const HAPPY_COOLDOWN = 6;
+
 const num = (v) => {
   const n = typeof v === 'string' ? Number(v.replace(/,/g, '')) : v;
   return Number.isFinite(n) ? n : null;
@@ -23,7 +28,7 @@ const num = (v) => {
 
 /**
  * What an item does for training, from its catalogue name and effect text.
- * @returns {{ energy: number|null, toMax: boolean, happy: number|null, doublesHappy: boolean, jump: boolean }}
+ * @returns {{ energy: number|null, toMax: boolean, happy: number|null, doublesHappy: boolean, jump: boolean, cooldownHours: number|null }}
  */
 export function trainingEffect(item) {
   const name = item?.name ?? '';
@@ -31,6 +36,8 @@ export function trainingEffect(item) {
   const en = /^xanax$/i.test(name) ? { energy: XANAX_ENERGY, toMax: false } : energyEffect(item);
   const doublesHappy = /^ecstasy$/i.test(name) || /doubles? (your )?happ/i.test(text);
   const happy = num(text.match(/happ(?:y|iness) by \+?(\d[\d,]*)/i)?.[1] ?? text.match(/\+?(\d[\d,]*) happ(?:y|iness)/i)?.[1]);
+  const hours = num(text.match(/booster cooldown by (\d+(?:\.\d+)?) hours?/i)?.[1]);
+  const minutes = num(text.match(/booster cooldown by (\d+) minutes?/i)?.[1]);
   return {
     energy: en?.energy ?? null,
     toMax: !!en?.toMax,
@@ -38,7 +45,141 @@ export function trainingEffect(item) {
     doublesHappy,
     // Big happy boosts are what make a jump; a single candy isn't one.
     jump: doublesHappy || (happy ?? 0) >= 500,
+    cooldownHours: hours ?? (minutes != null ? minutes / 60 : null),
   };
+}
+
+/** The part an item plays in a jump: 'xanax' stacks energy, 'ecstasy' doubles happy, 'happy' adds it (erotic DVD…); else null. */
+export function jumpRole(item, effect = trainingEffect(item)) {
+  if (/^xanax$/i.test(item?.name ?? '')) return 'xanax';
+  if (effect.doublesHappy) return 'ecstasy';
+  if (effect.jump && effect.happy) return 'happy';
+  return null;
+}
+
+/**
+ * Jumps that make the most of what you hold. Each stacks `STACK_XANAX` Xanax, uses as many happy
+ * items as the booster cooldown limit allows, then Ecstasy to double the happy, and trains.
+ * Stock is used before anything is bought, and as many jumps are planned as it takes to use up
+ * the jump items held. Happy items are spread evenly rather than piled into the first jump: gains
+ * rise with the log of happy, so two middling jumps beat one big one and one bare one.
+ *
+ * @param {object[]} items  jump items from the catalogue: { id, name, role, happy, cooldownHours, price, qty }
+ * @param {{ boosterCapHours: number, maxJumps?: number }} o
+ * @returns {{ jumps: object[], more: number, full: object, leftover: { item, qty }[] }}
+ *   jumps: { parts: [{ item, stock, buy }], happy, buyCost, stockValue, topUp: { item, qty, cost }|null }
+ *   full: the parts and cost of one jump bought entirely at market, for reference
+ */
+export function planJumps(items, { boosterCapHours, maxJumps = 10 }) {
+  const of = (role) => items.filter((i) => i.role === role);
+  const cheapest = (list, by = (i) => i.price) => list.filter((i) => i.price).sort((a, b) => by(a) - by(b))[0] ?? null;
+  const buyXanax = cheapest(of('xanax'));
+  const buyEcstasy = cheapest(of('ecstasy'));
+  const buyHappy = cheapest(of('happy'), (i) => i.price / i.happy);
+  const cd = (i) => i.cooldownHours ?? HAPPY_COOLDOWN;
+  // A booster can be used while the cooldown is still under the limit, so the last one may overshoot it.
+  const fits = (hours, i) => hours < boosterCapHours && cd(i) > 0;
+  const slotsOf = (i) => (i && boosterCapHours > 0 ? Math.ceil(boosterCapHours / cd(i)) : 0);
+
+  const held = (role) => of(role).filter((i) => i.qty > 0);
+  const xanaxHeld = held('xanax').map((i) => ({ item: i, left: i.qty }));
+  const ecstasyHeld = held('ecstasy').map((i) => ({ item: i, left: i.qty }));
+  const happyUnits = held('happy').sort((a, b) => b.happy - a.happy).flatMap((i) => Array(i.qty).fill(i));
+  const count = (list) => list.reduce((t, x) => t + x.left, 0);
+
+  const perJump = slotsOf(happyUnits[happyUnits.length - 1]);
+  const needed = Math.max(Math.ceil(count(xanaxHeld) / STACK_XANAX), count(ecstasyHeld), perJump ? Math.ceil(happyUnits.length / perJump) : 0);
+  const n = Math.min(needed, maxJumps);
+
+  const jumps = Array.from({ length: n }, () => ({ happyItems: [], hours: 0, happy: 0 }));
+  // Biggest happy items first, each to the jump with the least happy that still has booster room.
+  const unplacedHappy = [];
+  for (const unit of happyUnits) {
+    const j = jumps.filter((x) => fits(x.hours, unit)).sort((a, b) => a.happy - b.happy)[0];
+    if (!j) { unplacedHappy.push(unit); continue; }
+    j.happyItems.push(unit);
+    j.hours += cd(unit);
+    j.happy += unit.happy;
+  }
+
+  const take = (pool, want) => {
+    const parts = [];
+    for (const p of pool) {
+      if (!want) break;
+      const q = Math.min(p.left, want);
+      if (q) { parts.push({ item: p.item, stock: q, buy: 0 }); p.left -= q; want -= q; }
+    }
+    return { parts, short: want };
+  };
+  const out = jumps.map((j) => {
+    const parts = [];
+    const add = (pool, want, buyItem) => {
+      const { parts: got, short } = take(pool, want);
+      parts.push(...got);
+      if (short && buyItem) {
+        const same = parts.find((p) => p.item === buyItem);
+        if (same) same.buy += short; else parts.push({ item: buyItem, stock: 0, buy: short });
+      }
+    };
+    add(xanaxHeld, STACK_XANAX, buyXanax);
+    const happyCounts = new Map();
+    for (const i of j.happyItems) happyCounts.set(i, (happyCounts.get(i) ?? 0) + 1);
+    for (const [item, q] of happyCounts) parts.push({ item, stock: q, buy: 0 });
+    add(ecstasyHeld, 1, buyEcstasy);
+
+    let topUp = null;
+    if (buyHappy) {
+      let hours = j.hours;
+      let qty = 0;
+      while (fits(hours, buyHappy)) { hours += cd(buyHappy); qty++; }
+      if (qty) topUp = { item: buyHappy, qty, cost: qty * buyHappy.price, happy: qty * buyHappy.happy };
+    }
+    return {
+      parts,
+      happy: j.happy,
+      buyCost: parts.reduce((t, p) => t + p.buy * (p.item.price ?? 0), 0),
+      stockValue: parts.reduce((t, p) => t + p.stock * (p.item.price ?? 0), 0),
+      topUp,
+    };
+  });
+
+  const leftover = new Map();
+  for (const p of [...xanaxHeld, ...ecstasyHeld]) if (p.left) leftover.set(p.item, p.left);
+  for (const i of unplacedHappy) leftover.set(i, (leftover.get(i) ?? 0) + 1);
+
+  const fullParts = [
+    buyXanax && { item: buyXanax, stock: 0, buy: STACK_XANAX },
+    buyHappy && slotsOf(buyHappy) && { item: buyHappy, stock: 0, buy: slotsOf(buyHappy) },
+    buyEcstasy && { item: buyEcstasy, stock: 0, buy: 1 },
+  ].filter(Boolean);
+  return {
+    jumps: out,
+    more: needed - n,
+    full: {
+      parts: fullParts,
+      happy: buyHappy ? slotsOf(buyHappy) * buyHappy.happy : 0,
+      buyCost: fullParts.reduce((t, p) => t + p.buy * p.item.price, 0),
+    },
+    leftover: [...leftover].map(([item, qty]) => ({ item, qty })),
+  };
+}
+
+/**
+ * Consumables held or used, with how long the stock lasts at the rate used over `days`.
+ * @param {Map<number, number>} owned  itemId -> qty held
+ * @param {object[]} uses              uses within the range: { itemId, qty }
+ * @returns {{ itemId, qty, used, perWeek, daysLeft }[]}  held items first, most used first
+ */
+export function stockLevels(owned, uses, days) {
+  const used = new Map();
+  for (const u of uses) used.set(u.itemId, (used.get(u.itemId) ?? 0) + u.qty);
+  const ids = new Set([...[...owned].filter(([, q]) => q > 0).map(([id]) => id), ...used.keys()]);
+  return [...ids].map((itemId) => {
+    const qty = owned.get(itemId) ?? 0;
+    const u = used.get(itemId) ?? 0;
+    const perDay = days > 0 ? u / days : 0;
+    return { itemId, qty, used: u, perWeek: perDay * 7, daysLeft: perDay ? qty / perDay : null };
+  }).sort((a, b) => (b.qty > 0) - (a.qty > 0) || b.used - a.used || b.qty - a.qty);
 }
 
 /** Group gym sessions (any order) into bursts of training, oldest first. */

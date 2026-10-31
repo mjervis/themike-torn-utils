@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, trainingTotals, weeklyTraining } from '../js/training.js';
+import {
+  trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, trainingTotals, weeklyTraining, jumpRole, planJumps, stockLevels,
+} from '../js/training.js';
 import { statGain } from '../js/energy.js';
 
 const H = 3600;
@@ -92,4 +94,51 @@ test('sources splits used units into bought, free and unknown', async () => {
   const [use] = ledger.uses;
   assert.equal(use.cost, 300); // the 2 crime lollipops are free
   assert.deepEqual(sources([use]), { bought: 3, free: 2, unknown: 1 });
+});
+
+const jumpItems = (qty = {}) => [
+  { id: 206, name: 'Xanax', role: 'xanax', price: 800000, qty: qty.xanax ?? 0 },
+  { id: 197, name: 'Ecstasy', role: 'ecstasy', price: 50000, qty: qty.ecstasy ?? 0 },
+  { id: 366, name: 'Erotic DVD', role: 'happy', happy: 2500, cooldownHours: 6, price: 4000000, qty: qty.dvd ?? 0 },
+];
+
+test('jumpRole picks out Xanax, Ecstasy and big happy items', () => {
+  assert.equal(jumpRole({ name: 'Xanax', type: 'Drug' }), 'xanax');
+  assert.equal(jumpRole({ name: 'Ecstasy', type: 'Drug' }), 'ecstasy');
+  assert.equal(jumpRole({ name: 'Erotic DVD', type: 'Booster', effect: 'Increases happiness by 2,500 and booster cooldown by 6 hours.' }), 'happy');
+  assert.equal(jumpRole({ name: 'Lollipop', type: 'Candy', effect: 'Increases happiness by 25.' }), null);
+});
+
+test('planJumps uses stock first and buys only what is short', () => {
+  const { jumps, more, leftover } = planJumps(jumpItems({ xanax: 6, ecstasy: 1, dvd: 4 }), { boosterCapHours: 24 });
+  assert.equal(jumps.length, 2);
+  assert.equal(more, 0);
+  const [a, b] = jumps;
+  // DVDs are spread evenly, not all in the first jump.
+  assert.equal(a.happy, 5000);
+  assert.equal(b.happy, 5000);
+  assert.deepEqual(a.parts.map((p) => [p.item.name, p.stock, p.buy]), [['Xanax', 4, 0], ['Erotic DVD', 2, 0], ['Ecstasy', 1, 0]]);
+  assert.deepEqual(b.parts.map((p) => [p.item.name, p.stock, p.buy]), [['Xanax', 2, 2], ['Erotic DVD', 2, 0], ['Ecstasy', 0, 1]]);
+  assert.equal(b.buyCost, 2 * 800000 + 50000);
+  // A 24h limit fits four 6h DVDs, so each jump has room for two more.
+  assert.equal(a.topUp.qty, 2);
+  assert.deepEqual(leftover, []);
+});
+
+test('planJumps caps the plan and reports leftovers', () => {
+  const r = planJumps(jumpItems({ ecstasy: 15, dvd: 1 }), { boosterCapHours: 30, maxJumps: 10 });
+  assert.equal(r.jumps.length, 10);
+  assert.equal(r.more, 5);
+  assert.deepEqual(r.leftover.map((l) => [l.item.name, l.qty]), [['Ecstasy', 5]]);
+  assert.equal(r.full.parts.find((p) => p.item.name === 'Erotic DVD').buy, 5); // 30h fits five 6h DVDs
+  assert.equal(planJumps(jumpItems(), { boosterCapHours: 24 }).jumps.length, 0);
+});
+
+test('stockLevels shows how long stock lasts at the recent rate', () => {
+  const rows = stockLevels(new Map([[206, 6], [1, 3]]), [{ itemId: 206, qty: 7 }, { itemId: 197, qty: 2 }], 14);
+  assert.deepEqual(rows.map((r) => r.itemId), [206, 1, 197]);
+  assert.equal(rows[0].perWeek, 3.5);
+  assert.equal(rows[0].daysLeft, 12);
+  assert.equal(rows[1].daysLeft, null);
+  assert.equal(rows[2].qty, 0);
 });

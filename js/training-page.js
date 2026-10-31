@@ -1,13 +1,14 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
-import { syncLogs, backfillOlder, historyCoverage, loadGyms, savedLogs } from './sync.js';
+import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadInventoryCategories, savedLogs } from './sync.js';
 import { meta } from './db.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
-  weeklyTraining, trainingTotals,
+  weeklyTraining, trainingTotals, jumpRole, planJumps, stockLevels,
 } from './training.js';
 
 /**
- * The Training cost page: consumables used for training, happy jumps and what each one cost.
+ * The Training cost page: consumables used for training, happy jumps and what each one cost,
+ * plus the training stock held and jumps suggested to use it.
  * @param {{ $, store, status, esc, money, num, client: () => object|null, db: () => Promise<object>,
  *   player: () => Promise<{ id: number }>, catalog: () => Promise<Map>, logTypes: () => Promise<object[]>,
  *   ledgerLogIds: () => number[], ledgerFor: (logs: object[]) => object, hasUseTypes: () => boolean,
@@ -54,6 +55,8 @@ export function createTrainingPage(ctx) {
         data.gymCost = Object.fromEntries(gyms.map((g) => [g.id, g.energy_cost]));
       }
 
+      await loadStock(db, client, player, catalog);
+
       const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
       const ledgerIds = ctx.ledgerLogIds();
       const ids = [...ledgerIds, ...gymIds];
@@ -81,6 +84,25 @@ export function createTrainingPage(ctx) {
     }
   }
 
+  /** The training consumables in your inventory, kept so the next visit can show them before any calls. */
+  async function loadStock(db, client, player, catalog) {
+    status('Checking your training stock…');
+    try {
+      const inv = await loadInventoryCategories(db, client, player, [...CONSUMABLE_TYPES], {
+        keep: (it) => CONSUMABLE_TYPES.has(catalog.get(it.id)?.type),
+        onCategory: (cat, i, n) => status(`Checking your training stock… ${cat} (${i}/${n})`),
+      });
+      const owned = new Map();
+      for (const it of inv.value.items) if (!it.faction_owned) owned.set(it.id, (owned.get(it.id) ?? 0) + it.amount);
+      Object.assign(data, { owned, stockAt: inv.at, stockError: null });
+      await meta.set(db, `cache:training-stock:${player}`, { at: inv.at, value: [...owned] });
+    } catch (err) {
+      if (err.fatal) throw err;
+      // The cost history still works without it.
+      data.stockError = err.code === 16 ? 'Your key needs the user → inventory selection to show your stock.' : err.message;
+    }
+  }
+
   /**
    * Show what's saved in this browser, without a key or any API calls, as of the last sync.
    * Returns when that was, or null if there's nothing saved to show.
@@ -89,9 +111,11 @@ export function createTrainingPage(ctx) {
     if (data.loaded || !ctx.hasUseTypes()) return null;
     const gymIds = logTypes.filter((t) => isGymLogTitle(t.title)).map((t) => t.id);
     const ids = [...ctx.ledgerLogIds(), ...gymIds];
-    const [logs, cov, gyms] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms')]);
+    const [logs, cov, gyms, stock] = await Promise.all([savedLogs(db, player, ids), historyCoverage(db, player, ids), meta.get(db, 'cache:gyms'),
+      meta.get(db, `cache:training-stock:${player}`)]);
     if (!logs.length || cov.newest == null || data.loaded) return null; // nothing saved, or a load started meanwhile
     data.gymCost ??= Object.fromEntries((gyms?.value ?? []).map((g) => [g.id, g.energy_cost]));
+    if (stock) Object.assign(data, { owned: new Map(stock.value), stockAt: stock.at });
     Object.assign(data, { loaded: true, now: cov.newest, db, player, catalog, ids, gymIds: new Set(gymIds), logs, coverage: cov });
     $('#tr-older').hidden = cov.complete;
     $('#tr-results').hidden = false;
@@ -166,6 +190,10 @@ export function createTrainingPage(ctx) {
     const energy = store.get('energy', {});
     const anchor = weekWindow(now, energy.weekStartDay ?? DEFAULTS.weekStartDay, energy.weekStartHour ?? DEFAULTS.weekStartHour).start;
     renderWeeks(weeklyTraining({ uses, sessions, jumps }, anchor));
+
+    const days = (now - (s.range === 'all' ? Math.min(now, ...allUses.map((u) => u.timestamp)) : from)) / 86400;
+    renderStock(data.owned ? stockLevels(data.owned, uses, days) : null, effectOf, price);
+    renderPlan(effectOf, price, energy.boosterCapHours ?? DEFAULTS.boosterCapHours);
   }
 
   function renderCards(t, sessions, s, src) {
@@ -229,6 +257,70 @@ export function createTrainingPage(ctx) {
         <td class="muted">${esc(effectLabel(e))}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="muted">No consumables used in this range.</td></tr>';
+  }
+
+  const lasts = (d) => (d == null ? '—' : d < 1 ? 'under a day' : d < 14 ? `${Math.floor(d)} day${Math.floor(d) === 1 ? '' : 's'}` : `${Math.floor(d / 7)} weeks`);
+  const itemCell = (item, extra = '') => `<div class="cell">${item?.image ? `<img src="${esc(item.image)}" alt="" loading="lazy">` : ''}<span>${esc(item?.name ?? 'Unknown item')}</span>${extra}</div>`;
+
+  function renderStock(rows, effectOf, price) {
+    $('#tr-stock-asof').textContent = data.stockError ?? (data.stockAt ? `Inventory as of ${tct(data.stockAt)} TCT` : '');
+    if (!rows) {
+      $('#tr-stock tbody').innerHTML = '<tr><td colspan="7" class="muted">Refresh to read your stock from Torn.</td></tr>';
+      return;
+    }
+    $('#tr-stock tbody').innerHTML = rows.map((r) => {
+      const item = data.catalog.get(r.itemId);
+      const e = effectOf(r.itemId);
+      const p = price(r.itemId);
+      return `<tr>
+        <td class="name">${itemCell(item ?? { name: `Item ${r.itemId}` }, e.jump ? ' <span class="tag found">jump</span>' : '')}</td>
+        <td class="num">${r.qty ? n0(r.qty) : '<span class="tag warn">out</span>'}</td>
+        <td class="num">${r.qty && p ? money(r.qty * p) : '—'}</td>
+        <td class="num">${r.used ? n0(r.used) : ''}</td>
+        <td class="num">${r.perWeek ? ratio(r.perWeek) : ''}</td>
+        <td class="num">${r.qty ? lasts(r.daysLeft) : ''}</td>
+        <td class="muted">${esc(effectLabel(e))}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted">No drugs, energy drinks, boosters or candy in your inventory, and none used in this range.</td></tr>';
+  }
+
+  const partLabel = (p) => [p.stock && `${n0(p.stock)}× ${p.item.name}`, p.buy && `buy ${n0(p.buy)}× ${p.item.name}`].filter(Boolean).join(' + ');
+
+  function renderPlan(effectOf, price, boosterCapHours) {
+    const items = [...data.catalog.values()]
+      .filter((i) => CONSUMABLE_TYPES.has(i.type))
+      .map((i) => {
+        const e = effectOf(i.id);
+        return { id: i.id, name: i.name, role: jumpRole(i, e), happy: e.happy, cooldownHours: e.cooldownHours, price: price(i.id), qty: data.owned?.get(i.id) ?? 0 };
+      })
+      .filter((i) => i.role);
+    const { jumps, more, full, leftover } = planJumps(items, { boosterCapHours });
+    const fromStock = jumps.filter((j) => !j.buyCost).length;
+    const stockValue = jumps.reduce((t, j) => t + j.stockValue, 0);
+    const buyCost = jumps.reduce((t, j) => t + j.buyCost, 0);
+
+    $('#tr-plan-cards').innerHTML = `
+      <div class="card"><div class="label">Jumps from stock</div><div class="value">${n0(fromStock)}<span class="of"> of ${n0(jumps.length + more)}</span></div>
+        <div class="sub">${data.owned ? `with nothing to buy · booster limit ${n0(boosterCapHours)}h` : 'stock not read yet'}</div></div>
+      <div class="card"><div class="label">Stock used</div><div class="value">${money(stockValue)}</div><div class="sub">at market value</div></div>
+      <div class="card"><div class="label">Still to buy</div><div class="value">${money(buyCost)}</div>
+        <div class="sub">${jumps.length ? `to finish ${n0(jumps.length - fromStock)} jump${jumps.length - fromStock === 1 ? '' : 's'}` : 'nothing planned'}</div></div>
+      <div class="card"><div class="label">Full jump at market</div><div class="value">${full.parts.length ? money(full.buyCost) : '—'}</div>
+        <div class="sub">${esc(full.parts.map((p) => `${p.buy}× ${p.item.name}`).join(', '))}</div></div>`;
+
+    $('#tr-plan tbody').innerHTML = jumps.map((j, i) => `<tr>
+        <td>${i + 1}</td>
+        <td class="wrap">${esc(j.parts.map(partLabel).join(', '))}</td>
+        <td class="num">${j.happy ? `+${n0(j.happy)}` : '—'}${j.parts.some((p) => p.item.role === 'ecstasy') ? ' <span class="muted">then ×2</span>' : ''}</td>
+        <td class="num">${money(j.stockValue)}</td>
+        <td class="num">${j.buyCost ? money(j.buyCost) : '<span class="tag found">nothing</span>'}</td>
+        <td class="muted">${j.topUp ? `${n0(j.topUp.qty)}× ${esc(j.topUp.item.name)} (+${n0(j.topUp.happy)} happy) for ${money(j.topUp.cost)}` : ''}</td>
+      </tr>`).join('') || `<tr><td colspan="6" class="muted">${data.owned ? 'No Xanax, Ecstasy or big happy items in stock to plan a jump around.' : 'Refresh to read your stock from Torn.'}</td></tr>`;
+
+    const notes = [];
+    if (more) notes.push(`Your stock would stretch to ${n0(more)} more jump${more === 1 ? '' : 's'} after these.`);
+    if (leftover.length) notes.push(`Left over: ${leftover.map((l) => `${n0(l.qty)}× ${l.item.name}`).join(', ')}.`);
+    $('#tr-plan-note').textContent = notes.join(' ');
   }
 
   function renderWeeks(weeks) {
