@@ -104,6 +104,53 @@ test('ocReport adds item rewards at market value to the take, unless turned off'
   assert.equal(cashOnly.players.find((p) => p.name === 'Alice').money, 250);
 });
 
+test('ocReport costs items used up or lost, and can pay the faction back for armoury items', () => {
+  const slot = (user, req, outcome, owner = 'user') => ({
+    position: 'X', item_requirement: req,
+    user: { id: user, joined_at: START, item_outcome: outcome ? { owned_by: owner, item_id: req.id, item_uid: 1, outcome } : null },
+  });
+  const crimes = [
+    { id: 30, name: 'Heist', difficulty: 7, status: 'Successful', executed_at: START + DAY, rewards: { money: 10_000, items: [], respect: 0 },
+      slots: [
+        slot(1, { id: 50, is_reusable: false }, 'used'),            // single-use, used up: costs 1,000
+        slot(2, { id: 60, is_reusable: true }, 'used'),             // reusable, came back: kit worth 5,000
+        slot(3, { id: 60, is_reusable: true }, 'lost', 'faction'),  // reusable from the armoury, lost: costs 5,000
+      ] },
+    { id: 31, name: 'Flop', difficulty: 2, status: 'Failure', executed_at: START + 2 * DAY, rewards: null,
+      slots: [slot(1, { id: 50, is_reusable: false }, 'used'), slot(2, { id: 60, is_reusable: true }, null)] },
+  ];
+  const prices = { 50: 1000, 60: 5000 };
+  const opts = { start: START, end: END, share: 50, now: NOW, itemValue: (id) => prices[id] ?? null, itemName: (id) => `Item ${id}` };
+
+  const r = ocReport(crimes, MEMBERS, opts);
+  assert.equal(r.totals.cost, 7000);
+  assert.equal(r.totals.used, 2);
+  assert.equal(r.totals.lost, 1);
+  assert.equal(r.totals.net, 3000);
+  assert.equal(r.totals.kit, 1);          // Bob's item 60, counted once across both OCs
+  assert.equal(r.totals.kitValue, 5000);
+  assert.equal(r.totals.toPlayers, 5000); // without refunds the split is unchanged
+  assert.equal(r.crimes[0].cost, 6000);
+  assert.equal(r.crimes[1].net, -1000);
+
+  const refunded = ocReport(crimes, MEMBERS, { ...opts, refund: true });
+  const by = Object.fromEntries(refunded.players.map((p) => [p.name, p]));
+  // Heist: the faction's lost 5,000 item is paid back; Alice's 1,000 item isn't. 5,000 split 50/50 three ways.
+  assert.equal(refunded.totals.refunded, 5000);
+  assert.equal(by.Alice.supplied, 2000);
+  assert.equal(by.Alice.money, 2500 / 3);
+  assert.equal(by.Cara.money, 2500 / 3);
+  assert.equal(refunded.crimes[0].toFaction, 2500 + 5000);
+  assert.equal(refunded.totals.toPlayers + refunded.totals.toFaction, 10_000);
+
+  const html = newsletterHtml(refunded, opts);
+  assert.match(html, /Items used in the OCs: <b>\$7,000<\/b> \(2 used up, 1 lost/);
+  assert.match(html, /\$5,000 of it paid back to the faction for armoury items/);
+  assert.match(html, /Paid to players \(50%\): <b>\$2,500<\/b>/);
+  assert.match(html, /Take after items: <b>\$3,000<\/b>/);
+  assert.match(html, /Reusable items needed: \$5,000 \(1 item/);
+});
+
 test('newsletterHtml shows the cash and item split of the take', () => {
   const crimes = [crime(10, 'Successful', START + DAY, [1], { money: 1000, items: [{ id: 7, quantity: 2 }] })];
   const opts = { start: START, end: END, now: NOW, itemValue: () => 500, itemName: () => 'Thing' };
