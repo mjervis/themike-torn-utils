@@ -272,3 +272,15 @@ a.button:hover { background: var(--accent); }
 
 /* Halloween page */
 pre.raw { max-height: 320px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; }
+
+/* Organised crime */
+.oc-week { margin: 0 0 12px; font-size: 16px; }
+.oc-news { margin-top: 18px; }
+.oc-news h2 { margin: 0; font-size: 16px; }
+.oc-preview { background: #fff; color: #222; border-radius: 6px; padding: 12px 16px; overflow-x: auto; }
+.oc-preview a { color: #2a6db0; }
+.oc-preview h2 { font-size: 18px; margin: 0 0 4px; }
+.oc-preview h3 { font-size: 15px; margin: 14px 0 6px; }
+#oc-players tfoot th { position: static; cursor: default; }
+.oc-preview th { position: static; background: none; cursor: default; color: inherit; }
+.oc-preview th, .oc-preview td { white-space: normal; }
