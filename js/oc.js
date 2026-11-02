@@ -4,7 +4,8 @@
 const DAY = 86400;
 
 export const DEFAULTS = {
-  share: 90,          // % of each OC's money paid out to the players who ran it; the faction keeps the rest
+  share: 90,          // % of each OC's take paid out to the players who ran it; the faction keeps the rest
+  items: true,        // count item rewards in the take at market value
   includeMissing: true, // list members with no OC in the newsletter
 };
 
@@ -20,13 +21,16 @@ export const shareOf = (pct) => Math.min(100, Math.max(0, Number.isFinite(+pct) 
 /**
  * The OC report for the week `start`–`end`:
  *  { crimes, players, missing, totals }
- * An OC counts in the week it was executed. Its money is split `share`% to the players in its slots
- * (evenly, as Torn's payouts do) and the rest to the faction; failed OCs count as OCs that made nothing.
+ * An OC counts in the week it was executed. Its take — cash, plus item rewards at `itemValue` when
+ * `items` is on — is split `share`% to the players in its slots (evenly, as Torn's payouts do) and the
+ * rest to the faction; failed OCs count as OCs that made nothing. Items with no price add nothing.
  * `missing` is every current member with no OC executed in the week, noting anyone who joined one
  * in the week that hadn't finished by the end of it, and anyone who joined the faction mid-week.
  * `itemValue(id)` prices item rewards (e.g. at market value) and `itemName(id)` names them.
  */
-export function ocReport(crimes, members, { start, end, share = DEFAULTS.share, now = Date.now() / 1000, itemValue = () => null, itemName = () => null }) {
+export function ocReport(crimes, members, {
+  start, end, share = DEFAULTS.share, items: withItems = DEFAULTS.items, now = Date.now() / 1000, itemValue = () => null, itemName = () => null,
+}) {
   const frac = shareOf(share);
   const names = new Map(members.map((m) => [m.id, m.name]));
   const players = new Map();
@@ -42,7 +46,11 @@ export function ocReport(crimes, members, { start, end, share = DEFAULTS.share, 
   const rows = inWeek.map((c) => {
     const ids = playersIn(c);
     const ok = c.status === 'Successful';
-    const money = ok ? c.rewards?.money ?? 0 : 0;
+    const got = ok ? c.rewards?.items ?? [] : [];
+    const cash = ok ? c.rewards?.money ?? 0 : 0;
+    const itemsValue = got.reduce((t, it) => t + (itemValue(it.id) ?? 0) * (it.quantity ?? 0), 0);
+    const unpriced = got.filter((it) => itemValue(it.id) == null).length;
+    const money = cash + (withItems ? itemsValue : 0);
     const toPlayers = money * frac;
     for (const id of ids) {
       const p = player(id);
@@ -50,15 +58,15 @@ export function ocReport(crimes, members, { start, end, share = DEFAULTS.share, 
       if (ok) p.successful++; else p.failed++;
       p.money += ids.length ? toPlayers / ids.length : 0;
     }
-    for (const it of ok ? c.rewards?.items ?? [] : []) {
+    for (const it of got) {
       const row = items.get(it.id) ?? { id: it.id, name: itemName(it.id), qty: 0, value: itemValue(it.id) };
       row.qty += it.quantity ?? 0;
       items.set(it.id, row);
     }
     return {
       id: c.id, name: c.name, difficulty: c.difficulty, status: c.status, executed: c.executed_at,
-      players: ids, money, toPlayers, toFaction: money - toPlayers, respect: ok ? c.rewards?.respect ?? 0 : 0,
-      items: ok ? c.rewards?.items ?? [] : [],
+      players: ids, cash, itemsValue, unpriced, money, toPlayers, toFaction: money - toPlayers, respect: ok ? c.rewards?.respect ?? 0 : 0,
+      items: got.map((it) => ({ id: it.id, name: itemName(it.id), qty: it.quantity ?? 0, value: itemValue(it.id) })),
     };
   });
 
@@ -99,11 +107,14 @@ export function ocReport(crimes, members, { start, end, share = DEFAULTS.share, 
       ocs: rows.length,
       successful: rows.filter((r) => r.status === 'Successful').length,
       failed: rows.filter((r) => r.status === 'Failure').length,
+      cash: sum('cash'),
+      itemsValue: sum('itemsValue'),
+      unpriced: itemList.filter((i) => i.value == null).length,
+      withItems,
       money: sum('money'),
       toPlayers: sum('toPlayers'),
       toFaction: sum('toFaction'),
       respect: sum('respect'),
-      itemsValue: itemList.reduce((t, i) => t + (i.value ?? 0) * i.qty, 0),
       slots,
       participants: list.length,
       perPlayer: list.length ? slots / list.length : 0,
@@ -135,12 +146,13 @@ export function newsletterHtml(report, { start, end, includeMissing = DEFAULTS.i
   } else {
     parts.push(`<p><b>${n0(t.ocs)}</b> OC${t.ocs === 1 ? '' : 's'} completed (${n0(t.successful)} successful, ${n0(t.failed)} failed), `
       + `with <b>${n0(t.participants)}</b> member${t.participants === 1 ? '' : 's'} taking part — ${t.perPlayer.toFixed(1)} OCs each on average.</p>`);
-    parts.push(`<p>Total take: <b>${cash(t.money)}</b><br>Paid to players (${n0(t.share)}%): <b>${cash(t.toPlayers)}</b><br>`
+    const split = t.withItems && t.itemsValue ? ` (${cash(t.cash)} cash + ${cash(t.itemsValue)} in items at market value)` : '';
+    parts.push(`<p>Total take: <b>${cash(t.money)}</b>${split}<br>Paid to players (${n0(t.share)}%): <b>${cash(t.toPlayers)}</b><br>`
       + `Kept by the faction (${n0(100 - t.share)}%): <b>${cash(t.toFaction)}</b>`
       + `${t.respect ? `<br>Respect earned: <b>${n0(t.respect)}</b>` : ''}</p>`);
     if (report.items.length) {
       parts.push(`<p>Item rewards: ${report.items.map((i) => `${n0(i.qty)}× ${esc(i.name ?? `item #${i.id}`)}`).join(', ')}`
-        + `${t.itemsValue ? ` (about ${cash(t.itemsValue)} at market value)` : ''}</p>`);
+        + `${t.itemsValue && !t.withItems ? ` (about ${cash(t.itemsValue)} at market value, not included above)` : ''}</p>`);
     }
     parts.push('<h3>Earnings by member</h3>');
     parts.push(`<table style="border-collapse:collapse"><thead><tr><th ${cell}>#</th><th ${cell}>Member</th><th ${num}>OCs</th><th ${num}>Successful</th><th ${num}>Earned</th></tr></thead><tbody>`

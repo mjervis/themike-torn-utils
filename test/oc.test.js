@@ -68,15 +68,47 @@ test('ocReport lists members with no OC, noting open OCs and mid-week joiners', 
   assert.equal(by.Eve.joinedMidWeek, true);
 });
 
-test('ocReport counts players who have left the faction and prices item rewards', () => {
-  const crimes = [crime(10, 'Successful', START + DAY, [1, 99], { money: 1000, items: [{ id: 7, quantity: 2 }] })];
-  const r = ocReport(crimes, MEMBERS, { start: START, end: END, share: 50, now: NOW, itemValue: () => 500, itemName: () => 'Thing' });
+test('ocReport counts players who have left the faction', () => {
+  const crimes = [crime(10, 'Successful', START + DAY, [1, 99], { money: 1000 })];
+  const r = ocReport(crimes, MEMBERS, { start: START, end: END, share: 50, now: NOW });
   const left = r.players.find((p) => p.id === 99);
   assert.equal(left.member, false);
   assert.equal(left.money, 250);
   assert.equal(r.totals.toFaction, 500);
-  assert.deepEqual(r.items, [{ id: 7, name: 'Thing', qty: 2, value: 500 }]);
-  assert.equal(r.totals.itemsValue, 1000);
+});
+
+test('ocReport adds item rewards at market value to the take, unless turned off', () => {
+  const crimes = [
+    crime(10, 'Successful', START + DAY, [1, 2], { money: 1000, items: [{ id: 7, quantity: 2 }, { id: 8, quantity: 1 }] }),
+    crime(11, 'Successful', START + 2 * DAY, [1], { money: 0, items: [{ id: 7, quantity: 1 }] }),
+  ];
+  const prices = { 7: 500 }; // item 8 has no market value
+  const opts = { start: START, end: END, share: 50, now: NOW, itemValue: (id) => prices[id] ?? null, itemName: (id) => `Item ${id}` };
+  const r = ocReport(crimes, MEMBERS, opts);
+  assert.equal(r.totals.cash, 1000);
+  assert.equal(r.totals.itemsValue, 1500);
+  assert.equal(r.totals.money, 2500);
+  assert.equal(r.totals.toPlayers, 1250);
+  assert.equal(r.totals.unpriced, 1);
+  assert.equal(r.crimes[0].money, 2000);
+  assert.equal(r.crimes[0].unpriced, 1);
+  assert.equal(r.crimes[1].money, 500); // an items-only OC still pays out
+  const by = Object.fromEntries(r.players.map((p) => [p.name, p]));
+  assert.equal(by.Alice.money, 500 + 250);
+  assert.equal(by.Bob.money, 500);
+  assert.deepEqual(r.items.map((i) => [i.id, i.qty, i.value]), [[7, 3, 500], [8, 1, null]]);
+
+  const cashOnly = ocReport(crimes, MEMBERS, { ...opts, items: false });
+  assert.equal(cashOnly.totals.money, 1000);
+  assert.equal(cashOnly.totals.itemsValue, 1500);
+  assert.equal(cashOnly.players.find((p) => p.name === 'Alice').money, 250);
+});
+
+test('newsletterHtml shows the cash and item split of the take', () => {
+  const crimes = [crime(10, 'Successful', START + DAY, [1], { money: 1000, items: [{ id: 7, quantity: 2 }] })];
+  const opts = { start: START, end: END, now: NOW, itemValue: () => 500, itemName: () => 'Thing' };
+  assert.match(newsletterHtml(ocReport(crimes, MEMBERS, opts), opts), /\$2,000<\/b> \(\$1,000 cash \+ \$1,000 in items at market value\)/);
+  assert.match(newsletterHtml(ocReport(crimes, MEMBERS, { ...opts, items: false }), opts), /not included above/);
 });
 
 test('newsletterHtml escapes names and can leave out the no-OC list', () => {

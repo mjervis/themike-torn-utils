@@ -759,7 +759,8 @@ const organisedCrime = createOcPage({
   client: () => state.client,
   db: async () => (await dbReady, state.db),
   player: currentPlayer,
-  catalog: async () => (state.catalog.size ? state.catalog : (await ensureCatalog(), state.catalog)),
+  // Fresh market values for item rewards: the saved catalogue if it's under 15 minutes old, else 1 call.
+  catalog: async () => (await ensureCatalog(), state.catalog),
   onError: reportError,
 });
 const PAGES = ['inventory', 'energy', 'training', 'targets', 'chain', 'halloween', 'oc', 'settings'];

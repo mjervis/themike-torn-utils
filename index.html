@@ -536,7 +536,8 @@
           <button id="oc-this" type="button" class="secondary">This week</button>
         </div>
         <div class="filters">
-          <label class="check">Players' share of OC money <input id="oc-share" class="short" type="number" min="0" max="100" step="1" value="90"> %</label>
+          <label class="check"><input id="oc-items" type="checkbox" checked> Count item rewards at market value</label>
+          <label class="check">Players' share <input id="oc-share" class="short" type="number" min="0" max="100" step="1" value="90"> %</label>
         </div>
       </div>
       <h2 class="oc-week" id="oc-week"></h2>
@@ -570,7 +571,7 @@
         <h2 class="section-title">OCs completed</h2>
         <div class="table-wrap">
           <table id="oc-crimes">
-            <thead><tr><th>When (TCT)</th><th>Crime</th><th>Result</th><th>Players</th><th class="num">Take</th><th class="num">To players</th><th class="num">Faction keeps</th><th class="num">Respect</th></tr></thead>
+            <thead><tr><th>When (TCT)</th><th>Crime</th><th>Result</th><th>Players</th><th>Items</th><th class="num">Take</th><th class="num">To players</th><th class="num">Faction keeps</th><th class="num">Respect</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -589,8 +590,8 @@
         </section>
         </div>
 
-        <p class="footnote">An OC counts in the week it was executed, by the faction week start set on the Energy page (TCT). Its cash is split the players' share to the members in its slots, evenly, and the rest to the faction; failed OCs count as OCs that made nothing.
-          Item rewards are shown at market value but left out of the split. “No OC” lists current members with no OC executed in the week — greyed out if they joined one in the week that was still running at the end of it, and leaving out anyone who joined the faction after the week. Members who've since left show in earnings tagged “left”.
+        <p class="footnote">An OC counts in the week it was executed, by the faction week start set on the Energy page (TCT). Its take — cash, plus item rewards at today's Torn market value unless “Count item rewards” is unticked — is split the players' share to the members in its slots, evenly, and the rest to the faction; failed OCs count as OCs that made nothing.
+          Items Torn has no market value for add nothing and are flagged. “No OC” lists current members with no OC executed in the week — greyed out if they joined one in the week that was still running at the end of it, and leaving out anyone who joined the faction after the week. Members who've since left show in earnings tagged “left”.
           Needs a key with faction API access. A finished week is read once (2–3 API calls) and kept on this device; the current week is re-read when you open it or press Refresh.</p>
       </section>
     </div>
