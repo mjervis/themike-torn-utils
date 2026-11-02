@@ -23,14 +23,17 @@ export function createOcPage(ctx) {
   $('#oc-share').value = saved.share;
   $('#oc-missing-news').checked = saved.includeMissing;
   $('#oc-items').checked = saved.items;
+  $('#oc-refund').checked = saved.refund;
   const read = () => ({
     share: $('#oc-share').value === '' ? DEFAULTS.share : Number($('#oc-share').value),
     items: $('#oc-items').checked,
+    refund: $('#oc-refund').checked,
     includeMissing: $('#oc-missing-news').checked,
   });
   const save = () => { store.set('oc', read()); render(); };
   $('#oc-share').addEventListener('change', save);
   $('#oc-items').addEventListener('change', save);
+  $('#oc-refund').addEventListener('change', save);
   $('#oc-missing-news').addEventListener('change', save);
 
   // The week follows the Energy page's faction week start.
@@ -103,8 +106,8 @@ export function createOcPage(ctx) {
       }
       s.at = now;
       await meta.set(db, key, s);
-      const hasItems = Object.values(s.crimes).some((c) => c.rewards?.items?.length);
-      // Item rewards are valued at today's market prices (re-read at most every 15 minutes).
+      const hasItems = Object.values(s.crimes).some((c) => c.rewards?.items?.length || c.slots?.some((sl) => sl.item_requirement));
+      // Item rewards and items used are valued at today's market prices (re-read at most every 15 minutes).
       if (hasItems) data.catalog = await ctx.catalog();
       Object.assign(data, { loaded: true, live: true, membersLive: true, player, saved: s });
       $('#oc-results').hidden = false;
@@ -151,7 +154,7 @@ export function createOcPage(ctx) {
     const s = data.saved;
     const crimes = Object.values(s.crimes ?? {});
     return ocReport(crimes, s.members ?? [], {
-      start: week.start, end: week.end, share: read().share, items: read().items, now: s.membersAt ?? Date.now() / 1000,
+      start: week.start, end: week.end, share: read().share, items: read().items, refund: read().refund, now: s.membersAt ?? Date.now() / 1000,
       itemValue: (id) => data.catalog.get(id)?.value?.market_price ?? null,
       itemName: (id) => data.catalog.get(id)?.name ?? null,
     });
@@ -192,17 +195,23 @@ export function createOcPage(ctx) {
         <div class="sub">${t.participants ? `${t.perPlayer.toFixed(1)} OCs each on average` : 'nobody yet'}</div></div>
       <div class="card"><div class="label">No OC</div><div class="value ${noOc ? 'neg' : 'pos'}">${n0(noOc)}</div>
         <div class="sub">${r.missing.length - noOc ? `plus ${n0(r.missing.length - noOc)} in an OC still running` : 'current members'}</div></div>
+      ${t.cost || t.kitValue ? `<div class="card"><div class="label">Items used</div><div class="value ${t.cost ? 'neg' : ''}">${money(t.cost)}</div>
+        <div class="sub">${[t.used ? `${n0(t.used)} used up` : '', t.lost ? `${n0(t.lost)} lost` : ''].filter(Boolean).join(' · ') || 'nothing used up'}`
+          + `${t.cost ? ` · take after items ${money(t.net)}` : ''}${t.refund && t.refunded ? ` · ${money(t.refunded)} armoury items paid back to the faction first` : ''}`
+          + `${t.kitValue ? ` · reusable kit needed ${money(t.kitValue)} (${plural(t.kit, 'item')})` : ''}`
+          + `${t.costUnpriced ? ` · <span class="warn">${n0(t.costUnpriced)} with no price</span>` : ''}</div></div>` : ''}
       ${r.items.length ? `<div class="card"><div class="label">Item rewards</div><div class="value">${t.itemsValue ? money(t.itemsValue) : n0(r.items.reduce((n, i) => n + i.qty, 0))}</div>
         <div class="sub">${esc(r.items.map((i) => `${n0(i.qty)}× ${i.name ?? `#${i.id}`}`).join(', '))} · ${t.withItems ? 'at market value, in the split' : 'market value, not in the split'}${t.unpriced ? ` · <span class="warn">${n0(t.unpriced)} with no price</span>` : ''}</div></div>` : ''}`;
 
     $('#oc-players tbody').innerHTML = r.players.map((p, i) => `<tr>
       <td class="num">${i + 1}</td><td class="name">${who(p.id, p.name)}${p.member ? '' : ' <span class="tag">left</span>'}</td>
       <td class="num">${n0(p.ocs)}</td><td class="num">${n0(p.successful)}</td><td class="num">${p.failed ? n0(p.failed) : '<span class="muted">0</span>'}</td>
+      <td class="num">${p.supplied ? money(p.supplied) : '<span class="muted">—</span>'}</td>
       <td class="num">${money(p.money)}</td></tr>`).join('')
-      || '<tr><td colspan="6" class="muted">No OCs completed in this week.</td></tr>';
+      || '<tr><td colspan="7" class="muted">No OCs completed in this week.</td></tr>';
     $('#oc-players tfoot').innerHTML = r.players.length ? `<tr><th></th><th>Total</th><th class="num">${n0(t.slots)}</th>
       <th class="num">${n0(r.players.reduce((n, p) => n + p.successful, 0))}</th><th class="num">${n0(r.players.reduce((n, p) => n + p.failed, 0))}</th>
-      <th class="num">${money(t.toPlayers)}</th></tr>` : '';
+      <th class="num">${money(r.players.reduce((n, p) => n + p.supplied, 0))}</th><th class="num">${money(t.toPlayers)}</th></tr>` : '';
 
     $('#oc-missing-title').textContent = `No OC this week (${n0(r.missing.length)})`;
     $('#oc-missing tbody').innerHTML = r.missing.map((m) => {
@@ -219,9 +228,10 @@ export function createOcPage(ctx) {
       <td>${c.status === 'Successful' ? '<span class="pos">Success</span>' : '<span class="neg">Failed</span>'}</td>
       <td class="wrap">${c.players.map((id) => who(id, names.get(id))).join(', ')}</td>
       <td class="wrap">${c.items.length ? `${esc(c.items.map((i) => `${n0(i.qty)}× ${i.name ?? `#${i.id}`}`).join(', '))} <span class="muted small">${c.itemsValue ? money(c.itemsValue) : 'no price'}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="wrap">${c.used.length ? `${esc(c.used.map((u) => `${u.name ?? `#${u.id}`}${u.lost ? ' (lost)' : ''}`).join(', '))} <span class="muted small">${c.cost ? money(c.cost) : 'no price'}</span>` : '<span class="muted">—</span>'}</td>
       <td class="num">${money(c.money)}</td><td class="num">${money(c.toPlayers)}</td><td class="num">${money(c.toFaction)}</td>
       <td class="num">${c.respect ? n0(c.respect) : '—'}</td></tr>`).join('')
-      || '<tr><td colspan="9" class="muted">No OCs completed in this week.</td></tr>';
+      || '<tr><td colspan="10" class="muted">No OCs completed in this week.</td></tr>';
 
     $('#oc-news-preview').innerHTML = newsletterHtml(r, { ...week, includeMissing: read().includeMissing });
     lastReport = r;

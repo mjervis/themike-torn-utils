@@ -6,6 +6,7 @@ const DAY = 86400;
 export const DEFAULTS = {
   share: 90,          // % of each OC's take paid out to the players who ran it; the faction keeps the rest
   items: true,        // count item rewards in the take at market value
+  refund: false,      // pay the faction back for armoury items used up or lost in an OC before the split
   includeMissing: true, // list members with no OC in the newsletter
 };
 
@@ -26,23 +27,29 @@ export const shareOf = (pct) => Math.min(100, Math.max(0, Number.isFinite(+pct) 
  * rest to the faction; failed OCs count as OCs that made nothing. Items with no price add nothing.
  * `missing` is every current member with no OC executed in the week, noting anyone who joined one
  * in the week that hadn't finished by the end of it, and anyone who joined the faction mid-week.
- * `itemValue(id)` prices item rewards (e.g. at market value) and `itemName(id)` names them.
+ * Items the players needed are priced too: single-use items used up and reusable ones lost cost the
+ * OC (Torn records this for OCs from late July 2025). With `refund` on, items from the faction's
+ * armoury are paid back to the faction out of the OC's take (as far as it covers them) before the
+ * split; members aren't paid back for their own items. Reusable items that came back are reported as
+ * kit the OCs needed, not as a cost.
+ * `itemValue(id)` prices items (e.g. at market value) and `itemName(id)` names them.
  */
 export function ocReport(crimes, members, {
-  start, end, share = DEFAULTS.share, items: withItems = DEFAULTS.items, now = Date.now() / 1000, itemValue = () => null, itemName = () => null,
+  start, end, share = DEFAULTS.share, items: withItems = DEFAULTS.items, refund = DEFAULTS.refund, now = Date.now() / 1000, itemValue = () => null, itemName = () => null,
 }) {
   const frac = shareOf(share);
   const names = new Map(members.map((m) => [m.id, m.name]));
   const players = new Map();
   const player = (id) => {
     let p = players.get(id);
-    if (!p) players.set(id, p = { id, name: names.get(id) ?? null, member: names.has(id), ocs: 0, successful: 0, failed: 0, money: 0 });
+    if (!p) players.set(id, p = { id, name: names.get(id) ?? null, member: names.has(id), ocs: 0, successful: 0, failed: 0, money: 0, supplied: 0 });
     return p;
   };
 
   const inWeek = crimes.filter((c) => isDone(c) && c.executed_at >= start && c.executed_at < end)
     .sort((a, b) => a.executed_at - b.executed_at);
   const items = new Map();
+  const kitHeld = new Map(); // reusable items the OCs needed, once per player and item
   const rows = inWeek.map((c) => {
     const ids = playersIn(c);
     const ok = c.status === 'Successful';
@@ -51,13 +58,35 @@ export function ocReport(crimes, members, {
     const itemsValue = got.reduce((t, it) => t + (itemValue(it.id) ?? 0) * (it.quantity ?? 0), 0);
     const unpriced = got.filter((it) => itemValue(it.id) == null).length;
     const money = cash + (withItems ? itemsValue : 0);
-    const toPlayers = money * frac;
+
+    const used = [];
+    const kit = [];
+    for (const s of c.slots ?? []) {
+      const req = s.item_requirement;
+      const out = s.user?.item_outcome;
+      // A reusable item marked "used" came back; one that's "lost" didn't. Single-use items are used up.
+      if (out && (out.outcome === 'lost' || (out.outcome === 'used' && !req?.is_reusable))) {
+        used.push({
+          id: out.item_id, name: itemName(out.item_id), value: itemValue(out.item_id), lost: out.outcome === 'lost',
+          reusable: !!req?.is_reusable, by: out.owned_by === 'faction' ? null : s.user.id,
+        });
+      } else if (req?.is_reusable && s.user?.id != null) {
+        const k = { id: req.id, name: itemName(req.id), value: itemValue(req.id), player: s.user.id };
+        kit.push(k);
+        kitHeld.set(`${k.player}:${k.id}`, k);
+      }
+    }
+    const cost = used.reduce((t, u) => t + (u.value ?? 0), 0);
+    const armoury = used.reduce((t, u) => t + (u.by == null ? u.value ?? 0 : 0), 0);
+    const refunded = refund ? Math.min(armoury, money) : 0;
+    const toPlayers = (money - refunded) * frac;
     for (const id of ids) {
       const p = player(id);
       p.ocs++;
       if (ok) p.successful++; else p.failed++;
       p.money += ids.length ? toPlayers / ids.length : 0;
     }
+    for (const u of used) if (u.by != null) player(u.by).supplied += u.value ?? 0;
     for (const it of got) {
       const row = items.get(it.id) ?? { id: it.id, name: itemName(it.id), qty: 0, value: itemValue(it.id) };
       row.qty += it.quantity ?? 0;
@@ -66,6 +95,7 @@ export function ocReport(crimes, members, {
     return {
       id: c.id, name: c.name, difficulty: c.difficulty, status: c.status, executed: c.executed_at,
       players: ids, cash, itemsValue, unpriced, money, toPlayers, toFaction: money - toPlayers, respect: ok ? c.rewards?.respect ?? 0 : 0,
+      used, cost, refunded, net: money - cost, kit, kitValue: kit.reduce((t, k) => t + (k.value ?? 0), 0),
       items: got.map((it) => ({ id: it.id, name: itemName(it.id), qty: it.quantity ?? 0, value: itemValue(it.id) })),
     };
   });
@@ -98,6 +128,8 @@ export function ocReport(crimes, members, {
   const sum = (k) => rows.reduce((t, r) => t + r[k], 0);
   const itemList = [...items.values()].sort((a, b) => (b.value ?? 0) * b.qty - (a.value ?? 0) * a.qty);
   const slots = rows.reduce((t, r) => t + r.players.length, 0);
+  const allUsed = rows.flatMap((r) => r.used);
+  const kitList = [...kitHeld.values()];
   return {
     crimes: rows,
     players: list,
@@ -114,6 +146,15 @@ export function ocReport(crimes, members, {
       money: sum('money'),
       toPlayers: sum('toPlayers'),
       toFaction: sum('toFaction'),
+      cost: sum('cost'),
+      used: allUsed.filter((u) => !u.lost).length,
+      lost: allUsed.filter((u) => u.lost).length,
+      costUnpriced: allUsed.filter((u) => u.value == null).length,
+      refunded: sum('refunded'),
+      refund,
+      net: sum('net'),
+      kit: kitList.length,
+      kitValue: kitList.reduce((t, k) => t + (k.value ?? 0), 0),
       respect: sum('respect'),
       slots,
       participants: list.length,
@@ -150,6 +191,15 @@ export function newsletterHtml(report, { start, end, includeMissing = DEFAULTS.i
     parts.push(`<p>Total take: <b>${cash(t.money)}</b>${split}<br>Paid to players (${n0(t.share)}%): <b>${cash(t.toPlayers)}</b><br>`
       + `Kept by the faction (${n0(100 - t.share)}%): <b>${cash(t.toFaction)}</b>`
       + `${t.respect ? `<br>Respect earned: <b>${n0(t.respect)}</b>` : ''}</p>`);
+    if (t.cost || t.kitValue) {
+      const spent = [t.used ? `${n0(t.used)} used up` : '', t.lost ? `${n0(t.lost)} lost` : ''].filter(Boolean).join(', ');
+      parts.push('<p>'
+        + (t.cost ? `Items used in the OCs: <b>${cash(t.cost)}</b> (${spent}, at market value)`
+          + `${t.refund && t.refunded ? ` — ${cash(t.refunded)} of it paid back to the faction for armoury items before the split` : ''}<br>`
+          + `Take after items: <b>${cash(t.net)}</b>` : '')
+        + (t.kitValue ? `${t.cost ? '<br>' : ''}Reusable items needed: ${cash(t.kitValue)} (${n0(t.kit)} item${t.kit === 1 ? '' : 's'}, all returned to their owners)` : '')
+        + '</p>');
+    }
     if (report.items.length) {
       parts.push(`<p>Item rewards: ${report.items.map((i) => `${n0(i.qty)}× ${esc(i.name ?? `item #${i.id}`)}`).join(', ')}`
         + `${t.itemsValue && !t.withItems ? ` (about ${cash(t.itemsValue)} at market value, not included above)` : ''}</p>`);

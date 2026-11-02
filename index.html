@@ -23,8 +23,8 @@
       "./js/halloween.js": "./js/halloween.js?v=fb75cfe1ba",
       "./js/history.js": "./js/history.js?v=cfb812527f",
       "./js/ledger.js": "./js/ledger.js?v=10f18b9024",
-      "./js/oc-page.js": "./js/oc-page.js?v=55626916a8",
-      "./js/oc.js": "./js/oc.js?v=ba19610b49",
+      "./js/oc-page.js": "./js/oc-page.js?v=5d68e1eb2d",
+      "./js/oc.js": "./js/oc.js?v=36e28ae30a",
       "./js/sync.js": "./js/sync.js?v=5fa127179a",
       "./js/targets-page.js": "./js/targets-page.js?v=5e4864374b",
       "./js/targets.js": "./js/targets.js?v=633d73d6f3",
@@ -564,6 +564,7 @@
         </div>
         <div class="filters">
           <label class="check"><input id="oc-items" type="checkbox" checked> Count item rewards at market value</label>
+          <label class="check"><input id="oc-refund" type="checkbox"> Pay back armoury items before the split</label>
           <label class="check">Players' share <input id="oc-share" class="short" type="number" min="0" max="100" step="1" value="90"> %</label>
         </div>
       </div>
@@ -581,7 +582,7 @@
         <h2 class="section-title">Earnings by member</h2>
         <div class="table-wrap">
           <table id="oc-players">
-            <thead><tr><th class="num">#</th><th>Member</th><th class="num">OCs</th><th class="num">Successful</th><th class="num">Failed</th><th class="num">Earned</th></tr></thead>
+            <thead><tr><th class="num">#</th><th>Member</th><th class="num">OCs</th><th class="num">Successful</th><th class="num">Failed</th><th class="num">Items used</th><th class="num">Earned</th></tr></thead>
             <tbody></tbody>
             <tfoot></tfoot>
           </table>
@@ -598,7 +599,7 @@
         <h2 class="section-title">OCs completed</h2>
         <div class="table-wrap">
           <table id="oc-crimes">
-            <thead><tr><th>When (TCT)</th><th>Crime</th><th>Result</th><th>Players</th><th>Items</th><th class="num">Take</th><th class="num">To players</th><th class="num">Faction keeps</th><th class="num">Respect</th></tr></thead>
+            <thead><tr><th>When (TCT)</th><th>Crime</th><th>Result</th><th>Players</th><th>Items</th><th>Items used</th><th class="num">Take</th><th class="num">To players</th><th class="num">Faction keeps</th><th class="num">Respect</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -618,6 +619,7 @@
         </div>
 
         <p class="footnote">An OC counts in the week it was executed, by the faction week start set on the Energy page (TCT). Its take — cash, plus item rewards at today's Torn market value unless “Count item rewards” is unticked — is split the players' share to the members in its slots, evenly, and the rest to the faction; failed OCs count as OCs that made nothing.
+          “Items used” are single-use items used up and reusable items lost in the OC, at today's market value (Torn only records this for OCs since late July 2025); reusable items that came back aren't a cost, and show as the kit the week's OCs needed. With “Pay back armoury items” ticked, each OC first pays the faction back for items from its armoury used up or lost in it, as far as its take covers, and splits the rest; members aren't paid back for their own items.
           Items Torn has no market value for add nothing and are flagged. “No OC” lists current members with no OC executed in the week — greyed out if they joined one in the week that was still running at the end of it, and leaving out anyone who joined the faction after the week. Members who've since left show in earnings tagged “left”.
           Needs a key with faction API access. A finished week is read once (2–3 API calls) and kept on this device; the current week is re-read when you open it or press Refresh.</p>
       </section>
