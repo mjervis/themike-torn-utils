@@ -18,6 +18,7 @@
       <a href="#targets" data-page="targets">Targets</a>
       <a href="#chain" data-page="chain">Chain</a>
       <a href="#halloween" data-page="halloween">Halloween</a>
+      <a href="#oc" data-page="oc">Organised crime</a>
       <a href="#settings" data-page="settings">Settings</a>
     </nav>
   </header>
@@ -526,6 +527,74 @@
       </section>
     </div>
 
+    <div id="page-oc" class="page" hidden>
+      <div class="toolbar">
+        <div class="filters">
+          <button id="oc-prev" type="button" class="secondary">‹ Previous week</button>
+          <label class="check">Week of <input id="oc-date" type="date"></label>
+          <button id="oc-next" type="button" class="secondary">Next week ›</button>
+          <button id="oc-this" type="button" class="secondary">This week</button>
+        </div>
+        <div class="filters">
+          <label class="check">Players' share of OC money <input id="oc-share" class="short" type="number" min="0" max="100" step="1" value="90"> %</label>
+        </div>
+      </div>
+      <h2 class="oc-week" id="oc-week"></h2>
+
+      <section id="oc-results" hidden>
+        <p id="oc-notice" class="notice" role="note" hidden></p>
+        <div class="toolbar">
+          <span class="muted" id="oc-asof"></span>
+          <button id="oc-refresh" type="button">Refresh</button>
+        </div>
+        <div id="oc-body">
+        <div class="cards" id="oc-cards"></div>
+
+        <h2 class="section-title">Earnings by member</h2>
+        <div class="table-wrap">
+          <table id="oc-players">
+            <thead><tr><th class="num">#</th><th>Member</th><th class="num">OCs</th><th class="num">Successful</th><th class="num">Failed</th><th class="num">Earned</th></tr></thead>
+            <tbody></tbody>
+            <tfoot></tfoot>
+          </table>
+        </div>
+
+        <h2 class="section-title" id="oc-missing-title">No OC this week</h2>
+        <div class="table-wrap">
+          <table id="oc-missing">
+            <thead><tr><th>Member</th><th>Position</th><th class="num">Level</th><th class="num">Days in faction</th><th>Last action</th><th>Note</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">OCs completed</h2>
+        <div class="table-wrap">
+          <table id="oc-crimes">
+            <thead><tr><th>When (TCT)</th><th>Crime</th><th>Result</th><th>Players</th><th class="num">Take</th><th class="num">To players</th><th class="num">Faction keeps</th><th class="num">Respect</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <section class="panel oc-news">
+          <div class="toolbar">
+            <h2>Newsletter</h2>
+            <div class="filters">
+              <label class="check"><input id="oc-missing-news" type="checkbox" checked> List members with no OC</label>
+              <button id="oc-copy-rich" type="button">Copy for newsletter</button>
+              <button id="oc-copy-html" type="button" class="secondary">Copy HTML source</button>
+            </div>
+          </div>
+          <p class="hint">“Copy for newsletter” copies formatted text to paste straight into the newsletter editor; “Copy HTML source” copies the markup for the editor's HTML / source view. Preview:</p>
+          <div id="oc-news-preview" class="oc-preview"></div>
+        </section>
+        </div>
+
+        <p class="footnote">An OC counts in the week it was executed, by the faction week start set on the Energy page (TCT). Its cash is split the players' share to the members in its slots, evenly, and the rest to the faction; failed OCs count as OCs that made nothing.
+          Item rewards are shown at market value but left out of the split. “No OC” lists current members with no OC executed in the week — greyed out if they joined one in the week that was still running at the end of it, and leaving out anyone who joined the faction after the week. Members who've since left show in earnings tagged “left”.
+          Needs a key with faction API access. A finished week is read once (2–3 API calls) and kept on this device; the current week is re-read when you open it or press Refresh.</p>
+      </section>
+    </div>
+
     <div id="page-settings" class="page" hidden>
       <section class="panel key-panel">
         <h2>Torn API key</h2>
@@ -560,17 +629,17 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Only locally, in your browser — your log history, attack history, daily snapshots, cached inventory &amp; prices, target statuses, your faction's member list, chain reports and this week's faction attacks, settings and manual costs. Persistent until you clear it with the button below.</td>
+                  <td>Only locally, in your browser — your log history, attack history, daily snapshots, cached inventory &amp; prices, target statuses, your faction's member list, chain reports and this week's faction attacks, faction organised crimes, settings and manual costs. Persistent until you clear it with the button below.</td>
                   <td>Nobody</td>
-                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, where players you've beaten are now, and your faction's chain competition standings.</td>
+                  <td>Not eligible — only you have access. Shows you your own inventory's cost and profit, your own energy use against your gym target, where players you've beaten are now, your faction's chain competition standings, and your faction's organised crimes for its newsletter.</td>
                   <td>Stored locally only if you tick “Remember” / Not shared</td>
-                  <td>Custom: <code>user</code> → basic, inventory, bazaar, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>faction</code> → members, chain, chains, chainreport, attacks (needs faction API access); <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
+                  <td>Custom: <code>user</code> → basic, inventory, bazaar, log, bars, cooldowns, refills, gym, personalstats, attacks, profile; <code>faction</code> → members, chain, chains, chainreport, attacks, crimes (needs faction API access); <code>torn</code> → items, logtypes, gyms; <code>market</code> → itemmarket. Or Full Access.</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p><strong>Recommended:</strong>
-            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,bazaar,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;faction=members,chain,chains,chainreport,attacks&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
+            <a id="custom-key-link" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Torn%20Utils&amp;user=basic,inventory,bazaar,log,bars,cooldowns,refills,gym,personalstats,attacks,profile&amp;faction=members,chain,chains,chainreport,attacks,crimes&amp;torn=items,logtypes,gyms&amp;market=itemmarket" target="_blank" rel="noopener">create a custom key</a>
             with only the selections above. A Full Access key also works — logs are needed because that's where your purchases, item finds and gym training are recorded.
             You can review every call made with your key in Torn under <em>API Keys → key log</em>; this app tags its calls with the comment <code>inventory-profit</code>.</p>
         </details>
