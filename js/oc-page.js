@@ -22,12 +22,15 @@ export function createOcPage(ctx) {
   const saved = { ...DEFAULTS, ...store.get('oc', {}) };
   $('#oc-share').value = saved.share;
   $('#oc-missing-news').checked = saved.includeMissing;
+  $('#oc-items').checked = saved.items;
   const read = () => ({
     share: $('#oc-share').value === '' ? DEFAULTS.share : Number($('#oc-share').value),
+    items: $('#oc-items').checked,
     includeMissing: $('#oc-missing-news').checked,
   });
   const save = () => { store.set('oc', read()); render(); };
   $('#oc-share').addEventListener('change', save);
+  $('#oc-items').addEventListener('change', save);
   $('#oc-missing-news').addEventListener('change', save);
 
   // The week follows the Energy page's faction week start.
@@ -101,7 +104,8 @@ export function createOcPage(ctx) {
       s.at = now;
       await meta.set(db, key, s);
       const hasItems = Object.values(s.crimes).some((c) => c.rewards?.items?.length);
-      if (hasItems && !data.catalog.size) data.catalog = await ctx.catalog();
+      // Item rewards are valued at today's market prices (re-read at most every 15 minutes).
+      if (hasItems) data.catalog = await ctx.catalog();
       Object.assign(data, { loaded: true, live: true, membersLive: true, player, saved: s });
       $('#oc-results').hidden = false;
       render();
@@ -147,7 +151,7 @@ export function createOcPage(ctx) {
     const s = data.saved;
     const crimes = Object.values(s.crimes ?? {});
     return ocReport(crimes, s.members ?? [], {
-      start: week.start, end: week.end, share: read().share, now: s.membersAt ?? Date.now() / 1000,
+      start: week.start, end: week.end, share: read().share, items: read().items, now: s.membersAt ?? Date.now() / 1000,
       itemValue: (id) => data.catalog.get(id)?.value?.market_price ?? null,
       itemName: (id) => data.catalog.get(id)?.name ?? null,
     });
@@ -179,17 +183,17 @@ export function createOcPage(ctx) {
       <div class="card"><div class="label">OCs completed</div><div class="value">${n0(t.ocs)}</div>
         <div class="sub">${n0(t.successful)} successful · ${n0(t.failed)} failed${esc(state)}</div></div>
       <div class="card"><div class="label">Total take</div><div class="value">${money(t.money)}</div>
-        <div class="sub">${t.respect ? `${n0(t.respect)} respect` : 'cash from successful OCs'}</div></div>
+        <div class="sub">${t.withItems && t.itemsValue ? `${money(t.cash)} cash + ${money(t.itemsValue)} items` : 'cash from successful OCs'}${t.respect ? ` · ${n0(t.respect)} respect` : ''}</div></div>
       <div class="card"><div class="label">To players · ${n0(t.share)}%</div><div class="value pos">${money(t.toPlayers)}</div>
         <div class="sub">split evenly between each OC's players</div></div>
       <div class="card"><div class="label">Faction keeps · ${n0(100 - t.share)}%</div><div class="value pos">${money(t.toFaction)}</div>
-        <div class="sub">of the week's OC cash</div></div>
+        <div class="sub">of the week's OC ${t.withItems ? 'take' : 'cash'}</div></div>
       <div class="card"><div class="label">Members taking part</div><div class="value">${n0(t.participants)}<span class="of"> / ${n0(t.members)}</span></div>
         <div class="sub">${t.participants ? `${t.perPlayer.toFixed(1)} OCs each on average` : 'nobody yet'}</div></div>
       <div class="card"><div class="label">No OC</div><div class="value ${noOc ? 'neg' : 'pos'}">${n0(noOc)}</div>
         <div class="sub">${r.missing.length - noOc ? `plus ${n0(r.missing.length - noOc)} in an OC still running` : 'current members'}</div></div>
       ${r.items.length ? `<div class="card"><div class="label">Item rewards</div><div class="value">${t.itemsValue ? money(t.itemsValue) : n0(r.items.reduce((n, i) => n + i.qty, 0))}</div>
-        <div class="sub">${esc(r.items.map((i) => `${n0(i.qty)}× ${i.name ?? `#${i.id}`}`).join(', '))}${t.itemsValue ? ' · market value, not in the split' : ''}</div></div>` : ''}`;
+        <div class="sub">${esc(r.items.map((i) => `${n0(i.qty)}× ${i.name ?? `#${i.id}`}`).join(', '))} · ${t.withItems ? 'at market value, in the split' : 'market value, not in the split'}${t.unpriced ? ` · <span class="warn">${n0(t.unpriced)} with no price</span>` : ''}</div></div>` : ''}`;
 
     $('#oc-players tbody').innerHTML = r.players.map((p, i) => `<tr>
       <td class="num">${i + 1}</td><td class="name">${who(p.id, p.name)}${p.member ? '' : ' <span class="tag">left</span>'}</td>
@@ -214,9 +218,10 @@ export function createOcPage(ctx) {
       <td>${tct(c.executed)}</td><td>${esc(c.name)} <span class="muted small">level ${n0(c.difficulty)}</span></td>
       <td>${c.status === 'Successful' ? '<span class="pos">Success</span>' : '<span class="neg">Failed</span>'}</td>
       <td class="wrap">${c.players.map((id) => who(id, names.get(id))).join(', ')}</td>
+      <td class="wrap">${c.items.length ? `${esc(c.items.map((i) => `${n0(i.qty)}× ${i.name ?? `#${i.id}`}`).join(', '))} <span class="muted small">${c.itemsValue ? money(c.itemsValue) : 'no price'}</span>` : '<span class="muted">—</span>'}</td>
       <td class="num">${money(c.money)}</td><td class="num">${money(c.toPlayers)}</td><td class="num">${money(c.toFaction)}</td>
       <td class="num">${c.respect ? n0(c.respect) : '—'}</td></tr>`).join('')
-      || '<tr><td colspan="8" class="muted">No OCs completed in this week.</td></tr>';
+      || '<tr><td colspan="9" class="muted">No OCs completed in this week.</td></tr>';
 
     $('#oc-news-preview').innerHTML = newsletterHtml(r, { ...week, includeMissing: read().includeMissing });
     lastReport = r;
