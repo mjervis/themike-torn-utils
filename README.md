@@ -102,7 +102,9 @@ node --test
 
 ## Deploying
 
-Hosted on GitHub Pages from the root of `main` — every push to `main` redeploys. Any other static host (Cloudflare Pages, Netlify) works too: publish the repository root as-is.
+Hosted on GitHub Pages from the root of `main` — every push to `main` redeploys.
+
+GitHub Pages caches every file for 10 minutes, so `index.html` links each script and the stylesheet with a hash of its contents (`?v=…`, via an import map for the modules). A reload always gets a matching set of files, and unchanged files stay cached. **After changing any file in `js/` or `css/`, run `npm run stamp`** and commit the updated `index.html`; `node --test` fails until you do. Any other static host (Cloudflare Pages, Netlify) works too: publish the repository root as-is.
 
 ## Torn API Terms of Service
 
