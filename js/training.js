@@ -309,8 +309,9 @@ export function costUses(uses, price, valueAt = 'paid') {
 
 /**
  * Find happy jumps: a training burst with a big happy item (Ecstasy, erotic DVD…) used within
- * `JUMP_LEAD` before it or during it. Everything consumed since the previous burst (up to
- * `MAX_STACK` back) — the stacked Xanax, cans and so on — counts towards the jump.
+ * `JUMP_LEAD` before it or during it. Everything adding energy or happy since the previous burst
+ * (up to `MAX_STACK` back) — the stacked Xanax, cans and so on — counts towards the jump; drugs
+ * taken for something else, like Cannabis for nerve, don't.
  *
  * @param {object[]} uses       costed uses (see costUses), any order
  * @param {object[]} bursts     from trainingBursts, oldest first
@@ -318,6 +319,7 @@ export function costUses(uses, price, valueAt = 'paid') {
  * @returns {object[]} jumps, newest first: { start, end, stackFrom, energy, gain, stats, sessionIds, uses, cost, estimatedQty }
  */
 export function detectJumps(uses, bursts, effectOf) {
+  const feedsJump = (e) => !!(e?.energy || e?.happy || e?.doublesHappy);
   const sorted = [...uses].sort((a, b) => a.timestamp - b.timestamp);
   const jumps = [];
   bursts.forEach((b, i) => {
@@ -325,7 +327,7 @@ export function detectJumps(uses, bursts, effectOf) {
     const triggered = sorted.some((u) => u.timestamp > Math.max(prevEnd, b.start - JUMP_LEAD) && u.timestamp <= b.end && effectOf(u.itemId)?.jump);
     if (!triggered) return;
     const from = Math.max(prevEnd, b.start - MAX_STACK);
-    const stack = sorted.filter((u) => u.timestamp > from && u.timestamp <= b.end);
+    const stack = sorted.filter((u) => u.timestamp > from && u.timestamp <= b.end && feedsJump(effectOf(u.itemId)));
     jumps.push({
       start: b.start, end: b.end, stackFrom: stack[0]?.timestamp ?? b.start,
       energy: b.energy, gain: b.gain, stats: b.stats, sessionIds: b.sessions.map((s) => s.id),

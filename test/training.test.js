@@ -47,11 +47,12 @@ test('costUses values at cost paid, or market for unknown units', () => {
 });
 
 test('detectJumps counts the stack since the previous burst', () => {
-  const effects = { 1: { jump: false }, 2: { jump: true } }; // 1 = Xanax, 2 = Ecstasy
+  const effects = { 1: { energy: 250, jump: false }, 2: { doublesHappy: true, jump: true }, 3: { jump: false } }; // Xanax, Ecstasy, Cannabis
   const uses = costUses([
     { itemId: 1, qty: 1, timestamp: 1 * H, cost: 800, unknownQty: 0 },   // before the earlier burst: not counted
     { itemId: 1, qty: 1, timestamp: 10 * H, cost: 800, unknownQty: 0 },
     { itemId: 1, qty: 1, timestamp: 18 * H, cost: 800, unknownQty: 0 },
+    { itemId: 3, qty: 1, timestamp: 20 * H, cost: 30, unknownQty: 0 },  // for nerve, not the jump
     { itemId: 2, qty: 1, timestamp: 26 * H - 600, cost: 50, unknownQty: 0 },
   ], () => 0);
   const bursts = trainingBursts([
