@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   weekWindow, gymSessions, dailyTotals, statDeltas, attackEnergy, pace,
-  energyEffect, midnightsBetween, plan, isGymLogTitle, XANAX_ENERGY,
+  energyEffect, midnightsBetween, plan, isGymLogTitle, XANAX_ENERGY, stackMode, totalStats,
 } from '../js/energy.js';
 
 const ts = (iso) => Date.parse(iso) / 1000;
@@ -146,4 +146,58 @@ test('when booster cooldown runs out, denser boosters beat cheaper small cans', 
   // 10h of booster room: five Goose Juice (25) would fall short, four Red Cows (100) don't
   assert.deepEqual(r.allocations.map((a) => [a.label, a.count]), [['Can of Red Cow', 4]]);
   assert.equal(r.shortfall, 0);
+});
+
+test('energy over max reads as a stack, unless total stats are past 1.2m', () => {
+  const over = { ...bar, current: 400 };
+  assert.equal(stackMode({ bar: over, stats: 500_000 }).stacking, true);
+  assert.equal(stackMode({ bar: over, stats: null }).stacking, true);
+  const big = stackMode({ bar: over, stats: 1_200_000 });
+  assert.equal(big.stacking, false);
+  assert.ok(big.overMax && big.overLimit);
+  assert.equal(stackMode({ bar, stats: 500_000 }).stacking, false);
+  assert.equal(stackMode({ bar, stats: 2_000_000, mode: 'on' }).stacking, true);
+  assert.equal(stackMode({ bar: over, stats: 500_000, mode: 'off' }).stacking, false);
+});
+
+test('total battle stats are read from either API shape', () => {
+  assert.equal(totalStats({ total: 1_000 }), 1_000);
+  assert.equal(totalStats({ strength: { value: 1 }, defense: { value: 2 }, speed: { value: 3 }, dexterity: { value: 4 } }), 10);
+  assert.equal(totalStats({ strength: 1 }), null);
+  assert.equal(totalStats(null), null);
+});
+
+test('a stack is built to 1,000 and trained in one jump instead of now', () => {
+  const over = { ...bar, current: 400 };
+  const r = plan({
+    ...base, now: 0, end: 72 * H, needed: 2000, bar: over, ecstasy: 1,
+    cooldowns: { drug: 3 * H, booster: 0 }, stack: stackMode({ bar: over, stats: 300_000 }),
+  });
+  assert.equal(r.jump.xanax, 2); // 400 → 650 → 900; a third would pass 1,000
+  assert.equal(r.jump.energy, 900);
+  assert.deepEqual(r.jump.times, [3 * H, 11 * H]);
+  assert.equal(r.jump.at, 19 * H); // the drug cooldown clears for Ecstasy
+  assert.equal(r.jump.buy, 0);
+  assert.ok(!r.steps.some((s) => s.kind === 'train'));
+  assert.deepEqual(r.steps.slice(0, 4).map((s) => s.kind), ['stack', 'xanax', 'xanax', 'jump']);
+  // the rest of the target comes after the jump, with the Xanax left over after stacking
+  assert.equal(r.needed, 2000);
+  assert.ok(r.steps.filter((s) => s.kind !== 'stack').every((s) => s.at >= 3 * H));
+  assert.ok(!r.allocations.some((a) => a.kind === 'xanax' && a.count > a.buy));
+});
+
+test('past 1.2m stats, energy over max is trained now as usual', () => {
+  const over = { ...bar, current: 400 };
+  const r = plan({ ...base, now: 0, end: 24 * H, needed: 500, bar: over, stack: stackMode({ bar: over, stats: 1_500_000 }) });
+  assert.equal(r.jump, undefined);
+  assert.equal(r.steps[0].kind, 'train');
+  assert.match(r.steps[0].detail, /1\.5m total stats/);
+});
+
+test('a jump after the week ends counts towards next week', () => {
+  const over = { ...bar, current: 400 };
+  const r = plan({ ...base, now: 0, end: 10 * H, needed: 1000, bar: over, stack: stackMode({ bar: over, stats: 0 }) });
+  assert.equal(r.jump.inWeek, false);
+  assert.equal(r.shortfall, 1000);
+  assert.ok(r.steps.every((s) => s.at < 10 * H || s.kind === 'jump'));
 });

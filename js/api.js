@@ -252,6 +252,11 @@ export function createClient(key) {
       return (await get('/user/refills')).refills;
     },
 
+    /** Strength, defense, speed and dexterity, with the total. */
+    async battleStats() {
+      return (await get('/user/battlestats')).battlestats;
+    },
+
     /** The gym you're currently training in. */
     async gym() {
       return (await get('/user/gym')).gym;
