@@ -15,10 +15,7 @@ import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
 import { createTargetsPage } from './targets-page.js';
-import { createChainPage } from './chain-page.js';
-import { createHalloweenPage } from './halloween-page.js';
 import { createOcPage } from './oc-page.js';
-import { isTreatLogTitle } from './halloween.js';
 import { isMugLogTitle } from './targets.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
@@ -87,7 +84,6 @@ const settings = {
       selectedUses: [...document.querySelectorAll('#use-types input:checked')].map((i) => Number(i.value)),
       selectedTrades: [...document.querySelectorAll('#trade-log-types input:checked')].map((i) => Number(i.value)),
       selectedMugs: [...document.querySelectorAll('#mug-types input:checked')].map((i) => Number(i.value)),
-      selectedTreats: [...document.querySelectorAll('#treat-types input:checked')].map((i) => Number(i.value)),
       range: document.querySelector('input[name=range]:checked').value,
     };
   },
@@ -283,11 +279,10 @@ async function hydrate() {
   if (state.live) return {}; // a load finished meanwhile
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   if (!catalog) {
-    // Only the Targets or Chain page has been used: they don't need the item catalogue.
-    const [tg, ch, hw, oc] = await Promise.all([targets.restoreSaved({ db: state.db, player: last.id }), chain.restoreSaved({ db: state.db, player: last.id }),
-      halloween.restoreSaved({ db: state.db, player: last.id }), organisedCrime.restoreSaved({ db: state.db, player: last.id })]);
-    if (tg || ch || hw || oc) state.player ??= last;
-    return { ...(tg ? { targets: tg } : {}), ...(ch ? { chain: ch } : {}), ...(hw ? { halloween: hw } : {}), ...(oc ? { oc } : {}) };
+    // Only the Targets or Organised crime page has been used: they don't need the item catalogue.
+    const [tg, oc] = await Promise.all([targets.restoreSaved({ db: state.db, player: last.id }), organisedCrime.restoreSaved({ db: state.db, player: last.id })]);
+    if (tg || oc) state.player ??= last;
+    return { ...(tg ? { targets: tg } : {}), ...(oc ? { oc } : {}) };
   }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
@@ -312,13 +307,11 @@ async function hydrate() {
   await renderSavedSummary();
   // The other pages read the Settings log types, so they go after renderLogTypes above.
   const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
-  const [en, tr, tg, ch, hw, oc] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx), chain.restoreSaved(ctx),
-    halloween.restoreSaved(ctx), organisedCrime.restoreSaved(ctx)]);
+  const [en, tr, tg, oc] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx),
+    organisedCrime.restoreSaved(ctx)]);
   if (en) at.energy = en;
   if (tr) at.training = tr;
   if (tg) at.targets = tg;
-  if (ch) at.chain = ch;
-  if (hw) at.halloween = hw;
   if (oc) at.oc = oc;
   return at;
 }
@@ -553,7 +546,6 @@ function renderLogTypes() {
   // Unticking every trade type is a real choice, so only settings from before this list get the defaults.
   list('#trade-log-types', isTradeLogTitle, isDefaultTradeLog, Array.isArray(saved?.selectedTrades) ? saved.selectedTrades : null, 'No trade log types found.');
   list('#mug-types', isMugLogTitle, isMugLogTitle, Array.isArray(saved?.selectedMugs) ? saved.selectedMugs : null, 'No mug log types found.');
-  list('#treat-types', isTreatLogTitle, isTreatLogTitle, Array.isArray(saved?.selectedTreats) ? saved.selectedTreats : null, 'No treat log types found.');
   renderLogCounts();
 }
 
@@ -561,8 +553,8 @@ function renderLogTypes() {
 function renderLogCounts() {
   const counts = new Map();
   for (const l of state.rawLogs.values()) counts.set(l.details?.id, (counts.get(l.details?.id) ?? 0) + 1);
-  // Mug and treat logs are read by the Targets and Halloween pages, not kept with the inventory logs counted here.
-  document.querySelectorAll('.log-count:not(#mug-types .log-count):not(#treat-types .log-count)').forEach((el) => {
+  // Mug logs are read by the Targets page, not kept with the inventory logs counted here.
+  document.querySelectorAll('.log-count:not(#mug-types .log-count)').forEach((el) => {
     const input = el.closest('label').querySelector('input');
     const n = counts.get(Number(el.dataset.logType)) ?? 0;
     el.textContent = input.checked && state.player ? `· ${n.toLocaleString('en-GB')} saved` : '';
@@ -736,24 +728,6 @@ const targets = createTargetsPage({
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
-const chain = createChainPage({
-  $, store, status, esc, money, num: money0,
-  client: () => state.client,
-  db: async () => (await dbReady, state.db),
-  player: currentPlayer,
-  onError: reportError,
-});
-const halloween = createHalloweenPage({
-  $, store, status, esc, num: money0,
-  client: () => state.client,
-  db: async () => (await dbReady, state.db),
-  player: currentPlayer,
-  logTypes: async () => (state.logTypes.length ? state.logTypes : (await ensureLogTypes()).value),
-  // Read after logTypes(), which renders the Settings checkboxes these come from.
-  treatLogIds: () => settings.read().selectedTreats,
-  logPages: () => settings.read().logPages,
-  onError: reportError,
-});
 const organisedCrime = createOcPage({
   $, store, status, esc, money, num: money0,
   client: () => state.client,
@@ -763,11 +737,11 @@ const organisedCrime = createOcPage({
   catalog: async () => (await ensureCatalog(), state.catalog),
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training', 'targets', 'chain', 'halloween', 'oc', 'settings'];
+const PAGES = ['inventory', 'energy', 'training', 'targets', 'oc', 'settings'];
 // Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
-const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, chain: () => chain.live, halloween: () => halloween.live, oc: () => organisedCrime.live, settings: () => true };
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, oc: () => organisedCrime.live, settings: () => true };
 // Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), chain: () => chain.load(), halloween: () => halloween.load(), oc: () => organisedCrime.load(), settings: load };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), oc: () => organisedCrime.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -778,7 +752,7 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', chain: 'Chain', halloween: 'Halloween', oc: 'Organised crime', settings: 'Settings' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', oc: 'Organised crime', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
   savedStatus();
   if (state.client && !live[page]()) loaders[page]();
@@ -1119,7 +1093,7 @@ $('#inv-update').addEventListener('click', () => {
 });
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.tab = t.dataset.tab; render(); }));
 document.querySelectorAll('input[name=range]').forEach((r) => r.addEventListener('change', () => { settings.save(); render(); }));
-for (const sel of ['#find-types', '#sell-types', '#use-types', '#trade-log-types', '#mug-types', '#treat-types']) $(sel).addEventListener('change', () => settings.save());
+for (const sel of ['#find-types', '#sell-types', '#use-types', '#trade-log-types', '#mug-types']) $(sel).addEventListener('change', () => settings.save());
 $('#older-logs').addEventListener('click', readOlderLogs);
 $('#export-btn').addEventListener('click', exportBackup);
 $('#import-file').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
