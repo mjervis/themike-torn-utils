@@ -188,14 +188,6 @@ export function createClient(key) {
       return walkAttacks('/user/attacks', opts);
     },
 
-    /**
-     * Attacks made by your faction's members, newest first, walked back like attacks().
-     * Needs a Limited key (or a custom one with faction → attacks) and faction API access permission.
-     */
-    async factionAttacks(opts = {}) {
-      return walkAttacks('/faction/attacks', opts);
-    },
-
     /** Another player's public profile: level, faction, status (hospital, travel…), last action, life. */
     async profile(id) {
       return (await get(`/user/${id}/profile`)).profile;
@@ -220,21 +212,6 @@ export function createClient(key) {
         if (list.length < 100) break;
       }
       return [...seen.values()];
-    },
-
-    /** Your faction's current chain:{ id, current, max, timeout (secs left), cooldown, start, end }. */
-    async chain() {
-      return (await get('/faction/chain')).chain;
-    },
-
-    /** Your faction's finished chains from `from` (unix seconds) on, oldest first. */
-    async chains({ from } = {}) {
-      return (await get('/faction/chains', { from, sort: 'ASC', limit: 100 })).chains ?? [];
-    },
-
-    /** A chain report with per-member hits and respect: the latest (including an ongoing chain), or chain `id`. */
-    async chainReport(id) {
-      return (await get(id ? `/faction/${id}/chainreport` : '/faction/chainreport')).chainreport;
     },
 
     /** Energy, nerve, happy and life bars. */
