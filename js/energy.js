@@ -16,9 +16,14 @@ export const DEFAULTS = {
   allowBuying: true,
   xanaxCooldownHours: 8, // Torn's drug cooldown for Xanax is 6–8h; plan for the worst case
   boosterCapHours: 24,   // booster cooldown ceiling (faction/company perks can raise it)
+  stacking: 'auto',      // plan around a happy jump stack: 'auto' (when over max energy), 'on' or 'off'
 };
 
 export const XANAX_ENERGY = 250;
+/** Torn won't let Xanax or boosters take energy past this, so a happy jump stacks up to it. */
+export const STACK_ENERGY = 1000;
+/** Past this many total battle stats a happy jump's extra gains aren't worth stacking for. */
+export const JUMP_STAT_LIMIT = 1_200_000;
 const ATTACK_ENERGY = 25;
 
 /** Personal stats read at week start and now (max 10 per call). */
@@ -122,6 +127,27 @@ export function energyEffect(item) {
   return { kind: 'booster', energy: toMax ? null : energy, toMax, cooldownHours };
 }
 
+/** Total battle stats from `/user/battlestats`, where each stat is a number or `{ value }`. */
+export function totalStats(bs) {
+  if (!bs) return null;
+  const total = num(bs.total?.value ?? bs.total);
+  if (total != null) return total;
+  const parts = ['strength', 'defense', 'speed', 'dexterity'].map((k) => num(bs[k]?.value ?? bs[k]));
+  return parts.every((v) => v != null) ? parts.reduce((t, v) => t + v, 0) : null;
+}
+
+/**
+ * Whether to plan around a stack for a happy jump. On auto, energy over max means Xanax or boosters
+ * are being stacked rather than trained — worth doing only below `JUMP_STAT_LIMIT` total stats.
+ * @returns {{ stacking: boolean, overMax: boolean, overLimit: boolean, stats: number|null }}
+ */
+export function stackMode({ bar, stats, mode = DEFAULTS.stacking }) {
+  const overMax = bar.current > bar.maximum;
+  const overLimit = stats != null && stats >= JUMP_STAT_LIMIT;
+  const stacking = mode === 'on' || (mode === 'auto' && overMax && !overLimit);
+  return { stacking, overMax, overLimit, stats };
+}
+
 /** TCT midnights strictly between `now` and `end`: each one brings a fresh daily refill. */
 export function midnightsBetween(now, end) {
   const out = [];
@@ -140,9 +166,12 @@ export function midnightsBetween(now, end) {
  * @param {boolean} p.refillUsed          today's energy refill already used
  * @param {{ id, name, effect, price, owned }[]} p.items    candidate energy items
  * @param {object} p.options              DEFAULTS-shaped settings
+ * @param {object} [p.stack]              from stackMode(): plan a happy jump instead of training now
+ * @param {number} [p.ecstasy]            Ecstasy held, for the jump step
  */
-export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, options }) {
+export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, options, stack, ecstasy }) {
   const o = { ...DEFAULTS, ...options };
+  if (stack?.stacking) return planJump({ now, end, needed, bar, cooldowns, refillUsed, items, o, ecstasy });
   const hoursLeft = Math.max(0, (end - now) / HOUR);
   const max = bar.maximum;
   const perHour = bar.interval ? (bar.increment * HOUR) / bar.interval : 0;
@@ -206,8 +235,60 @@ export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, opti
     else result.spare = -gap;
   }
 
-  result.steps = buildSteps(result, { now, bar, cooldowns, o });
+  result.steps = buildSteps(result, { now, bar, cooldowns, o, stack });
   return result;
+}
+
+/**
+ * Stack Xanax up to `STACK_ENERGY`, train it all in one happy jump once the drug cooldown is clear
+ * for Ecstasy, then plan the rest of the week from there. Regen stops while you're over max, so the
+ * stack is only what you hold now plus the Xanax still to take.
+ */
+function planJump({ now, end, needed, bar, cooldowns, refillUsed, items, o, ecstasy }) {
+  const xanax = items.find((i) => i.effect?.kind === 'drug');
+  const room = Math.max(0, Math.floor((STACK_ENERGY - bar.current) / XANAX_ENERGY));
+  const count = !o.useXanax || !xanax ? 0 : o.allowBuying ? room : Math.min(room, xanax.owned ?? 0);
+  const times = Array.from({ length: count }, (_, i) => now + (cooldowns.drug ?? 0) + i * o.xanaxCooldownHours * HOUR);
+  // Ecstasy shares the drug cooldown, so the jump waits for it to clear after the last Xanax.
+  const at = count ? times[count - 1] + o.xanaxCooldownHours * HOUR : now + (cooldowns.drug ?? 0);
+  const energy = Math.min(STACK_ENERGY, bar.current + count * XANAX_ENERGY);
+  const inWeek = at < end;
+  const buy = Math.max(0, count - (xanax?.owned ?? 0));
+  const jump = { at, energy, inWeek, xanax: count, buy, times, owned: xanax?.owned ?? 0, price: xanax?.price ?? null };
+
+  // After the jump: energy at 0, booster cooldown full of happy items, the drug cooldown from Ecstasy.
+  const sameDay = Math.floor(at / DAY) === Math.floor(now / DAY);
+  const rest = !inWeek ? { allocations: [], steps: [], natural: 0, boosted: 0, spare: 0, shortfall: needed } : plan({
+    now: at, end, needed: Math.max(0, needed - (inWeek ? energy : 0)),
+    bar: { ...bar, current: 0, full_time: bar.interval ? (bar.maximum / bar.increment) * bar.interval : 0 },
+    cooldowns: { drug: o.xanaxCooldownHours * HOUR, booster: o.boosterCapHours * HOUR },
+    refillUsed: sameDay && refillUsed,
+    items: items.map((i) => (i === xanax ? { ...i, owned: Math.max(0, (i.owned ?? 0) - count) } : i)),
+    options: o,
+  });
+
+  const steps = [{
+    at: now, kind: 'stack', title: `Stacking for a happy jump — hold your ${bar.current} energy`,
+    detail: `Don't train yet: build the stack to ${energy} and train it in one go with happy items. Regen stops while you're over max.` +
+      (!refillUsed ? ' Save today\'s energy refill for after the jump — it fills to max rather than adding to the stack.' : ''),
+  }];
+  times.forEach((t, i) => steps.push({
+    at: t, kind: 'xanax', title: `Take Xanax ${i + 1} of ${count} — stack to ${Math.min(STACK_ENERGY, bar.current + (i + 1) * XANAX_ENERGY)}`,
+    detail: 'Don\'t train it — keep stacking.' +
+      (i === 0 ? ` You have ${jump.owned}${buy ? `; buy ${buy} more` : ''}. Xanax carries a small overdose risk.` : ''),
+  }));
+  steps.push({
+    at, kind: 'jump', title: `Happy jump: train all ${energy} energy`,
+    detail: 'Once your drug cooldown is clear, use your happy items (erotic DVDs etc.) up to your booster limit, then Ecstasy, ' +
+      `then train the whole stack straight away. You hold ${ecstasy ?? 0} Ecstasy.` +
+      (inWeek ? '' : ' This lands after the week resets, so it counts towards next week\'s target.'),
+  });
+  for (const st of rest.steps) {
+    if (st.at >= end) continue;
+    steps.push(st.kind === 'refill' && st.at === at ? { ...st, title: 'Use your energy refill after the jump', when: null } : st);
+  }
+
+  return { ...rest, needed, hoursLeft: Math.max(0, (end - now) / HOUR), jump, steps: steps.sort((a, b) => a.at - b.at) };
 }
 
 const perEnergy = (price, energy) => (price && energy ? price / energy : null);
@@ -238,15 +319,18 @@ function allocate(options, gap, slots, boosterHours) {
   return { gap, allocations: [...byItem.values()] };
 }
 
-function buildSteps(r, { now, bar, cooldowns, o }) {
+function buildSteps(r, { now, bar, cooldowns, o, stack }) {
   const steps = [];
   const stillNeeded = r.needed > 0;
 
   if (stillNeeded && bar.current > 0) {
     const amount = Math.min(bar.current, r.needed);
+    const jumpNote = stack?.overMax && stack.overLimit
+      ? `Looks like a stack, but at ${Math.round(stack.stats / 1e5) / 10}m total stats a happy jump isn't worth it — train it as normal.`
+      : null;
     steps.push({ at: now, kind: 'train',
       title: amount < bar.current ? `Train ${amount} energy now — that meets your target` : `Train your ${bar.current} energy now`,
-      detail: bar.current >= bar.maximum ? 'You\'re at full energy, so natural regen is currently being wasted.' : null });
+      detail: jumpNote ?? (bar.current >= bar.maximum ? 'You\'re at full energy, so natural regen is currently being wasted.' : null) });
   }
 
   let boosterRoomNow = o.boosterCapHours - (cooldowns.booster ?? 0) / HOUR;

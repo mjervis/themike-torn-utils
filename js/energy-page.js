@@ -1,6 +1,6 @@
 import {
   DEFAULTS, WEEK_STATS, weekWindow, isGymLogTitle, gymSessions, dailyTotals,
-  statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY,
+  statDeltas, attackEnergy, pace, energyEffect, plan, fmtHours, XANAX_ENERGY, stackMode, totalStats,
 } from './energy.js';
 import { syncLogs, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
@@ -31,6 +31,7 @@ export function createEnergyPage(ctx) {
     target: ['#en-target', 'number'], weekStartDay: ['#en-day', 'number'], weekStartHour: ['#en-hour', 'number'],
     reserve: ['#en-reserve', 'number'], offlineHours: ['#en-offline', 'number'],
     boosterCapHours: ['#en-booster-cap', 'number'], xanaxCooldownHours: ['#en-xan-cd', 'number'],
+    stacking: ['#en-stacking', 'text'],
     useRefills: ['#en-refills', 'bool'], useXanax: ['#en-xanax', 'bool'], useCans: ['#en-cans', 'bool'], allowBuying: ['#en-buy', 'bool'],
   };
 
@@ -38,7 +39,7 @@ export function createEnergyPage(ctx) {
     const out = {};
     for (const [k, [sel, kind]] of Object.entries(fields)) {
       const el = $(sel);
-      out[k] = kind === 'bool' ? el.checked : Math.max(0, Number(el.value) || 0);
+      out[k] = kind === 'bool' ? el.checked : kind === 'text' ? el.value : Math.max(0, Number(el.value) || 0);
     }
     return out;
   }
@@ -84,6 +85,7 @@ export function createEnergyPage(ctx) {
       const cooldowns = await client.cooldowns();
       const refills = await client.refills();
       const gym = await client.gym().catch(() => null);
+      const stats = totalStats(await client.battleStats().catch(() => null));
       if (!data.gymCost) {
         const gyms = (await loadGyms(db, client).catch(() => null))?.value ?? [];
         data.gymCost = Object.fromEntries(gyms.map((g) => [g.id, g.energy_cost]));
@@ -107,13 +109,13 @@ export function createEnergyPage(ctx) {
       const owned = ownedOf(inv.value.items);
 
       Object.assign(data, {
-        loaded: true, live: true, now, week, bars, cooldowns, refills, gym, logs, catalog, owned,
+        loaded: true, live: true, now, week, bars, cooldowns, refills, gym, stats, logs, catalog, owned,
         sessions: gymSessions(logs, data.gymCost),
         deltas: statDeltas(statsStart, statsNow),
       });
       // Kept so the next visit can show this straight away, before anything is fetched.
       await meta.set(db, `cache:energy:${player}`, {
-        at: now, value: { week, bars, cooldowns, refills, gym, owned: [...owned], deltas: data.deltas, gymCost: data.gymCost },
+        at: now, value: { week, bars, cooldowns, refills, gym, stats, owned: [...owned], deltas: data.deltas, gymCost: data.gymCost },
       });
       $('#tos').open = false;
       $('#en-results').hidden = false;
@@ -143,7 +145,7 @@ export function createEnergyPage(ctx) {
     // Another page may have read the inventory since this one was saved.
     const owned = inv && inv.at > saved.at ? ownedOf(inv.value.items) : new Map(v.owned);
     Object.assign(data, {
-      loaded: true, now: saved.at, week: v.week, bars: v.bars, cooldowns: v.cooldowns, refills: v.refills, gym: v.gym,
+      loaded: true, now: saved.at, week: v.week, bars: v.bars, cooldowns: v.cooldowns, refills: v.refills, gym: v.gym, stats: v.stats ?? null,
       logs, catalog, owned, deltas: v.deltas, gymCost: data.gymCost ?? v.gymCost,
       sessions: gymSessions(logs, data.gymCost ?? v.gymCost),
     });
@@ -176,9 +178,12 @@ export function createEnergyPage(ctx) {
     const { now, week, bars, cooldowns, refills, sessions, deltas } = data;
     const spent = sessions.reduce((t, x) => t + (x.energy ?? 0), 0);
     const p = pace({ target: s.target, spent, start: week.start, end: week.end, now });
+    const stack = stackMode({ bar: bars.energy, stats: data.stats, mode: s.stacking });
+    const ecstasy = [...data.catalog.values()].find((it) => /^ecstasy$/i.test(it.name));
     const result = plan({
       now, end: week.end, needed: p.remaining, bar: bars.energy, cooldowns,
       refillUsed: !!refills.energy, items: energyItems(), options: s,
+      stack, ecstasy: ecstasy ? data.owned.get(ecstasy.id) ?? 0 : 0,
     });
     $('#en-asof').textContent = `As of ${tct(now)} · week ${tct(week.start)} → ${tct(week.end)}`;
     renderCards(s, spent, p, result);
@@ -217,20 +222,24 @@ export function createEnergyPage(ctx) {
       $('#en-feed').innerHTML = '';
       return;
     }
-    if (!p.remaining) {
+    if (!p.remaining && !r.jump) {
       $('#en-summary').innerHTML = '<strong class="pos">Target met.</strong> Anything more you train this week is up to you.';
       $('#en-feed').innerHTML = '';
       return;
     }
-    const parts = [`natural regen ≈ ${n0(r.natural)}`];
+    const { jump } = r;
+    const parts = [...(jump?.inWeek ? [`happy jump ${n0(jump.energy)}`] : []), `natural regen${jump ? ' after it' : ''} ≈ ${n0(r.natural)}`];
     for (const a of r.allocations) parts.push(`${a.count} × ${esc(a.label)} = ${n0(a.count * a.energyEach)}`);
     const spend = r.allocations.reduce((t, a) => t + (a.buy ?? 0) * (a.price ?? 0), 0);
-    const verdict = r.shortfall
-      ? `<strong class="neg">Short by ${n0(r.shortfall)}</strong> even using every option allowed — consider allowing more options or raising the booster limit.`
-      : r.allocations.length
-        ? `<strong class="pos">On track</strong> with the plan below${spend ? ` (about ${money(spend)} of extra items to buy)` : ''}.`
-        : `<strong class="pos">On track on natural regen alone</strong> — about ${n0(r.spare)} spare, no boosters needed.`;
-    $('#en-summary').innerHTML = `${verdict}<br><span class="muted">Needed ${n0(p.remaining)}: ${parts.join(' + ')}.</span>`;
+    const jumpLine = !jump ? '' : `<strong>Stacking for a happy jump</strong> — ${n0(jump.energy)} energy trained in one go ${jump.at <= data.now ? 'now' : `at ${tct(jump.at)}`}${jump.inWeek ? '' : ', after this week ends'}.<br>`;
+    const verdict = !p.remaining
+      ? '<strong class="pos">Target met</strong> — the jump is extra.'
+      : r.shortfall
+        ? `<strong class="neg">Short by ${n0(r.shortfall)}</strong> even using every option allowed — consider allowing more options or raising the booster limit.`
+        : r.allocations.length
+          ? `<strong class="pos">On track</strong> with the plan below${spend ? ` (about ${money(spend)} of extra items to buy)` : ''}.`
+          : `<strong class="pos">On track on natural regen alone</strong> — about ${n0(r.spare)} spare, no boosters needed.`;
+    $('#en-summary').innerHTML = `${jumpLine}${verdict}` + (p.remaining ? `<br><span class="muted">Needed ${n0(p.remaining)}: ${parts.join(' + ')}.</span>` : '');
 
     $('#en-feed').innerHTML = r.steps.map((st) => {
       const when = st.at <= data.now ? (st.when ?? 'Now') : st.when ?? `${tct(st.at)} <span class="muted">· in ${until(st.at)}</span>`;
