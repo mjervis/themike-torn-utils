@@ -9,7 +9,8 @@ export const DEFAULTS = {
   weekStartDay: 1,      // 0 = Sunday … 6 = Saturday (TCT)
   weekStartHour: 0,     // TCT hour the week rolls over
   reserve: 0,           // energy kept back for attacks etc. this week
-  offlineHours: 8,      // longest stretch per day without logging in (sleep)
+  activeFrom: 8,        // TCT hour you're usually online from…
+  activeTo: 0,          // …and offline from (sleep); equal hours mean always online
   useRefills: true,
   useXanax: true,
   useCans: true,
@@ -149,6 +150,25 @@ export function stackMode({ bar, stats, mode = DEFAULTS.stacking }) {
 }
 
 /** TCT midnights strictly between `now` and `end`: each one brings a fresh daily refill. */
+/** Hours a day you're offline, from the active hours. */
+export function offlineHours({ activeFrom, activeTo }) {
+  return (((activeFrom - activeTo) % 24) + 24) % 24;
+}
+
+/** Whether `t` falls inside the active hours (TCT). */
+export function isActive(t, { activeFrom, activeTo }) {
+  if (activeFrom === activeTo) return true;
+  const h = (((t % DAY) + DAY) % DAY) / HOUR;
+  return activeFrom < activeTo ? h >= activeFrom && h < activeTo : h >= activeFrom || h < activeTo;
+}
+
+/** `t`, or the start of the next active stretch if you'd be asleep then. */
+export function nextActive(t, o) {
+  if (isActive(t, o)) return t;
+  const start = Math.floor(t / DAY) * DAY + o.activeFrom * HOUR;
+  return start > t ? start : start + DAY;
+}
+
 export function midnightsBetween(now, end) {
   const out = [];
   for (let m = Math.floor(now / DAY) * DAY + DAY; m < end; m += DAY) out.push(m);
@@ -176,9 +196,11 @@ export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, opti
   const max = bar.maximum;
   const perHour = bar.interval ? (bar.increment * HOUR) / bar.interval : 0;
   const fillHours = perHour ? max / perHour : Infinity;
+  // You're online now; anything later waits until you're awake.
+  const awake = (t) => (t <= now ? t : nextActive(t, o));
 
   // Natural regen stops at the cap, so a long offline stretch wastes whatever comes after the bar fills.
-  const wastedPerDay = Math.max(0, o.offlineHours - fillHours) * perHour;
+  const wastedPerDay = Math.max(0, offlineHours(o) - fillHours) * perHour;
   const regen = Math.max(0, perHour * hoursLeft - wastedPerDay * (hoursLeft / 24));
   const natural = Math.max(0, bar.current + regen - o.reserve);
 
@@ -193,7 +215,8 @@ export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, opti
   } else {
     // Daily refills: points, not cash, so they go first when allowed.
     if (o.useRefills) {
-      const times = [...(refillUsed ? [] : [now]), ...midnightsBetween(now, end)];
+      // A refill lasts until 00:00 TCT, so one due while you're asleep waits until you're up that day.
+      const times = [...(refillUsed ? [] : [now]), ...midnightsBetween(now, end).map(awake).filter((t) => t < end)];
       const n = Math.min(times.length, Math.ceil(gap / max));
       if (n > 0) {
         result.allocations.push({ kind: 'refill', label: 'Energy refill', count: n, energyEach: max, times: times.slice(0, n) });
@@ -204,7 +227,7 @@ export function plan({ now, end, needed, bar, cooldowns, refillUsed, items, opti
     // Use what you already hold first, then buy whatever is cheapest per energy.
     // Xanax is limited by drug cooldown slots, boosters by booster cooldown hours.
     const slots = [];
-    for (let t = now + (cooldowns.drug ?? 0); t < end; t += o.xanaxCooldownHours * HOUR) slots.push(t);
+    for (let t = awake(now + (cooldowns.drug ?? 0)); t < end; t = awake(t + o.xanaxCooldownHours * HOUR)) slots.push(t);
     const boosterHours = Math.max(0, o.boosterCapHours - (cooldowns.booster ?? 0) / HOUR) + hoursLeft;
 
     const candidates = items.filter((i) =>
@@ -248,9 +271,11 @@ function planJump({ now, end, needed, bar, cooldowns, refillUsed, items, o, ecst
   const xanax = items.find((i) => i.effect?.kind === 'drug');
   const room = Math.max(0, Math.floor((STACK_ENERGY - bar.current) / XANAX_ENERGY));
   const count = !o.useXanax || !xanax ? 0 : o.allowBuying ? room : Math.min(room, xanax.owned ?? 0);
-  const times = Array.from({ length: count }, (_, i) => now + (cooldowns.drug ?? 0) + i * o.xanaxCooldownHours * HOUR);
+  const awake = (t) => (t <= now ? t : nextActive(t, o));
+  const times = [];
+  for (let i = 0, t = awake(now + (cooldowns.drug ?? 0)); i < count; i++, t = awake(t + o.xanaxCooldownHours * HOUR)) times.push(t);
   // Ecstasy shares the drug cooldown, so the jump waits for it to clear after the last Xanax.
-  const at = count ? times[count - 1] + o.xanaxCooldownHours * HOUR : now + (cooldowns.drug ?? 0);
+  const at = awake(count ? times[count - 1] + o.xanaxCooldownHours * HOUR : now + (cooldowns.drug ?? 0));
   const energy = Math.min(STACK_ENERGY, bar.current + count * XANAX_ENERGY);
   const inWeek = at < end;
   const buy = Math.max(0, count - (xanax?.owned ?? 0));
@@ -371,7 +396,7 @@ function buildSteps(r, { now, bar, cooldowns, o, stack }) {
     steps.push({ at: full, kind: 'regen',
       title: bar.full_time ? 'Energy full — train before this' : 'Keep training as energy regenerates',
       detail: `Regen is ${round(r.perHour)}/hour, a full bar every ${fmtHours(r.fillHours)}.` +
-        (r.wastedPerDay > 0 ? ` Being offline for ${o.offlineHours}h at a time wastes about ${Math.round(r.wastedPerDay)} a day — train right before you log off.` : '') });
+        (r.wastedPerDay > 0 ? ` Being offline for ${offlineHours(o)}h at a time wastes about ${Math.round(r.wastedPerDay)} a day — train right before you log off.` : '') });
   }
 
   return steps.sort((a, b) => a.at - b.at);

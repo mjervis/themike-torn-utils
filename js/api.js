@@ -198,6 +198,11 @@ export function createClient(key) {
       return (await get('/faction/members')).members ?? [];
     },
 
+    /** Your faction's member ids by crime experience, highest first. */
+    async factionCrimeExp() {
+      return (await get('/faction/crimeexp')).crimeexp ?? [];
+    },
+
     /**
      * Your faction's organised crimes in category `cat` (completed, available, expired…), newest first.
      * `from`/`to` (unix seconds) apply to `filters`, e.g. executed_at; pages of 100 are read by offset.

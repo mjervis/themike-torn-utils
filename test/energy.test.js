@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   weekWindow, gymSessions, dailyTotals, statDeltas, attackEnergy, pace,
-  energyEffect, midnightsBetween, plan, isGymLogTitle, XANAX_ENERGY, stackMode, totalStats,
+  energyEffect, midnightsBetween, plan, isActive, nextActive, offlineHours, isGymLogTitle, XANAX_ENERGY, stackMode, totalStats,
 } from '../js/energy.js';
 
 const ts = (iso) => Date.parse(iso) / 1000;
@@ -78,7 +78,7 @@ test('refills come back at every TCT midnight before the week ends', () => {
 const bar = { current: 50, maximum: 150, increment: 5, interval: 600, full_time: 6000 }; // 30/hour
 const xanax = { id: 206, name: 'Xanax', effect: energyEffect({ name: 'Xanax', type: 'Drug' }), price: 800000, owned: 2 };
 const redCow = { id: 1, name: 'Can of Red Cow', effect: { kind: 'booster', energy: 25, toMax: false, cooldownHours: 2 }, price: 2_000_000, owned: 3 };
-const base = { cooldowns: { drug: 0, booster: 0 }, refillUsed: false, items: [xanax, redCow], options: { offlineHours: 0 } };
+const base = { cooldowns: { drug: 0, booster: 0 }, refillUsed: false, items: [xanax, redCow], options: { activeFrom: 0, activeTo: 0 } };
 
 test('natural regen alone can cover the target', () => {
   const now = 0;
@@ -102,7 +102,7 @@ test('shortfall is filled with refills, then the cheapest energy per dollar', ()
 test('drug cooldown and the end of the week limit Xanax', () => {
   const r = plan({
     ...base, now: 0, end: 10 * H, needed: 5000, bar,
-    cooldowns: { drug: 4 * H, booster: 0 }, options: { offlineHours: 0, useRefills: false, useCans: false },
+    cooldowns: { drug: 4 * H, booster: 0 }, options: { activeFrom: 0, activeTo: 0, useRefills: false, useCans: false },
   });
   const xan = r.allocations.find((a) => a.kind === 'xanax');
   assert.equal(xan.count, 1); // only the 4h slot fits; the next would be at 12h
@@ -113,27 +113,54 @@ test('booster cooldown caps energy drinks and not buying limits to stock', () =>
   const r = plan({
     ...base, now: 0, end: 2 * H, needed: 5000, bar,
     cooldowns: { drug: 0, booster: 20 * H },
-    options: { offlineHours: 0, useRefills: false, useXanax: false, allowBuying: true },
+    options: { activeFrom: 0, activeTo: 0, useRefills: false, useXanax: false, allowBuying: true },
   });
   // 24h cap − 20h used + 2h left in the week = 6h → three 2h cans
   assert.equal(r.allocations[0].count, 3);
-  const owned = plan({ ...base, now: 0, end: 48 * H, needed: 5000, bar, options: { offlineHours: 0, useRefills: false, useXanax: false, allowBuying: false } });
+  const owned = plan({ ...base, now: 0, end: 48 * H, needed: 5000, bar, options: { activeFrom: 0, activeTo: 0, useRefills: false, useXanax: false, allowBuying: false } });
   assert.equal(owned.allocations[0].count, 3);
 });
 
 test('long offline stretches waste natural regen', () => {
-  const r = plan({ ...base, now: 0, end: 24 * H, needed: 100, bar, options: { offlineHours: 8 } });
+  const r = plan({ ...base, now: 0, end: 24 * H, needed: 100, bar, options: { activeFrom: 8, activeTo: 0 } });
   // full bar takes 5h, so 3h × 30 = 90 lost per day
   assert.equal(r.wastedPerDay, 90);
   assert.equal(Math.round(r.natural), 50 + 720 - 90);
 });
 
+test('active hours wrap past midnight and push asleep times to when you wake', () => {
+  const o = { activeFrom: 8, activeTo: 0 };
+  assert.equal(offlineHours(o), 8);
+  assert.equal(offlineHours({ activeFrom: 22, activeTo: 6 }), 16);
+  assert.equal(isActive(10 * H, o), true);
+  assert.equal(isActive(3 * H, o), false);
+  assert.equal(isActive(3 * H, { activeFrom: 22, activeTo: 6 }), true);
+  assert.equal(isActive(3 * H, { activeFrom: 5, activeTo: 5 }), true);
+  assert.equal(nextActive(3 * H, o), 8 * H);
+  assert.equal(nextActive(26 * H, o), 32 * H);
+  assert.equal(nextActive(10 * H, o), 10 * H);
+  assert.equal(nextActive(23 * H, { activeFrom: 7, activeTo: 23 }), 31 * H);
+});
+
+test('no Xanax or refills are planned while you sleep', () => {
+  // now 20:00, awake 08:00–00:00: Xanax at 20:00 now, then 04:00 → 08:00, then 16:00, then 00:00 → 08:00
+  const r = plan({
+    ...base, items: [{ ...xanax, owned: 10 }, redCow], now: 20 * H, end: 20 * H + 48 * H, needed: 99_999, bar,
+    options: { activeFrom: 8, activeTo: 0, useCans: false },
+  });
+  const xan = r.steps.filter((s) => s.kind === 'xanax').map((s) => s.at / H);
+  assert.deepEqual(xan, [20, 32, 40, 56, 64]);
+  for (const t of xan.slice(1)) assert.ok(t % 24 >= 8, `Xanax at ${t % 24}:00`);
+  const refills = r.steps.filter((s) => s.kind === 'refill').map((s) => s.at / H);
+  assert.deepEqual(refills, [20, 32, 56]); // midnights pushed to 08:00 the same day
+});
+
 test('items you hold are used before buying anything', () => {
-  const r = plan({ ...base, now: 0, end: 24 * H, needed: 50 + 720 + 75 + 250, bar, options: { offlineHours: 0, useRefills: false } });
+  const r = plan({ ...base, now: 0, end: 24 * H, needed: 50 + 720 + 75 + 250, bar, options: { activeFrom: 0, activeTo: 0, useRefills: false } });
   // both are owned, so the cheaper-per-energy Xanax covers it
   assert.deepEqual(r.allocations.map((a) => [a.label, a.count, a.buy]), [['Xanax', 2, 0]]);
   // with no Xanax held, the three owned Red Cows (75) go first even though buying Xanax is cheaper per energy
-  const more = plan({ ...base, items: [{ ...xanax, owned: 0 }, redCow], now: 0, end: 24 * H, needed: 50 + 720 + 75 + 250, bar, options: { offlineHours: 0, useRefills: false } });
+  const more = plan({ ...base, items: [{ ...xanax, owned: 0 }, redCow], now: 0, end: 24 * H, needed: 50 + 720 + 75 + 250, bar, options: { activeFrom: 0, activeTo: 0, useRefills: false } });
   assert.deepEqual(more.allocations.map((a) => [a.label, a.count, a.buy]), [['Can of Red Cow', 3, 0], ['Xanax', 1, 1]]);
 });
 
@@ -141,7 +168,7 @@ test('when booster cooldown runs out, denser boosters beat cheaper small cans', 
   const goose = { id: 2, name: 'Can of Goose Juice', effect: { kind: 'booster', energy: 5, toMax: false, cooldownHours: 2 }, price: 300_000, owned: 0 };
   const r = plan({
     ...base, items: [goose, { ...redCow, owned: 0 }], now: 0, end: 2 * H, needed: 50 + 60 + 100, bar,
-    cooldowns: { drug: 0, booster: 16 * H }, options: { offlineHours: 0, useRefills: false, useXanax: false },
+    cooldowns: { drug: 0, booster: 16 * H }, options: { activeFrom: 0, activeTo: 0, useRefills: false, useXanax: false },
   });
   // 10h of booster room: five Goose Juice (25) would fall short, four Red Cows (100) don't
   assert.deepEqual(r.allocations.map((a) => [a.label, a.count]), [['Can of Red Cow', 4]]);
