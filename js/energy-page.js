@@ -24,12 +24,15 @@ export function createEnergyPage(ctx) {
   const data = { loaded: false, gymCost: null };
 
   // ---------- settings ----------
-  $('#en-hour').innerHTML = Array.from({ length: 24 }, (_, h) =>
-    `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+  const hours = (prefix = '') => Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}">${prefix}${String(h).padStart(2, '0')}:00</option>`).join('');
+  $('#en-hour').innerHTML = hours();
+  $('#en-active-from').innerHTML = hours('from ');
+  $('#en-active-to').innerHTML = hours('to ');
 
   const fields = {
     target: ['#en-target', 'number'], weekStartDay: ['#en-day', 'number'], weekStartHour: ['#en-hour', 'number'],
-    reserve: ['#en-reserve', 'number'], offlineHours: ['#en-offline', 'number'],
+    reserve: ['#en-reserve', 'number'], activeFrom: ['#en-active-from', 'number'], activeTo: ['#en-active-to', 'number'],
     boosterCapHours: ['#en-booster-cap', 'number'], xanaxCooldownHours: ['#en-xan-cd', 'number'],
     stacking: ['#en-stacking', 'text'],
     useRefills: ['#en-refills', 'bool'], useXanax: ['#en-xanax', 'bool'], useCans: ['#en-cans', 'bool'], allowBuying: ['#en-buy', 'bool'],

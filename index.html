@@ -15,8 +15,8 @@
       "./js/categories.js": "./js/categories.js?v=043957ac32",
       "./js/costing.js": "./js/costing.js?v=8d5a421b46",
       "./js/db.js": "./js/db.js?v=fab3060f68",
-      "./js/energy-page.js": "./js/energy-page.js?v=62caae40b7",
-      "./js/energy.js": "./js/energy.js?v=eb9d7c19be",
+      "./js/energy-page.js": "./js/energy-page.js?v=9ef64b30b1",
+      "./js/energy.js": "./js/energy.js?v=83fe49c23e",
       "./js/history.js": "./js/history.js?v=cfb812527f",
       "./js/ledger.js": "./js/ledger.js?v=10f18b9024",
       "./js/oc-page.js": "./js/oc-page.js?v=5d68e1eb2d",
@@ -215,8 +215,11 @@
           <label>Energy to keep for attacks etc.
             <input id="en-reserve" type="number" min="0" step="25" value="0">
           </label>
-          <label>Longest time offline each day (hours)
-            <input id="en-offline" type="number" min="0" max="24" step="0.5" value="8">
+          <label>Awake hours (TCT)
+            <span class="pair">
+              <select id="en-active-from" aria-label="Online from"></select>
+              <select id="en-active-to" aria-label="Offline from"></select>
+            </span>
           </label>
           <label>Booster cooldown limit (hours)
             <input id="en-booster-cap" type="number" min="0" max="72" step="1" value="24">
