@@ -11,11 +11,11 @@
   <script type="importmap">{
     "imports": {
       "./js/api.js": "./js/api.js?v=77775a51fc",
-      "./js/app.js": "./js/app.js?v=eb73c923c3",
+      "./js/app.js": "./js/app.js?v=ffd3aaed5b",
       "./js/categories.js": "./js/categories.js?v=043957ac32",
       "./js/costing.js": "./js/costing.js?v=8d5a421b46",
       "./js/db.js": "./js/db.js?v=fab3060f68",
-      "./js/energy-page.js": "./js/energy-page.js?v=9ef64b30b1",
+      "./js/energy-page.js": "./js/energy-page.js?v=c4b7dfa7bb",
       "./js/energy.js": "./js/energy.js?v=83fe49c23e",
       "./js/history.js": "./js/history.js?v=cfb812527f",
       "./js/ledger.js": "./js/ledger.js?v=10f18b9024",
@@ -23,14 +23,15 @@
       "./js/oc.js": "./js/oc.js?v=36e28ae30a",
       "./js/ocplan-page.js": "./js/ocplan-page.js?v=a95ce4172e",
       "./js/ocplan.js": "./js/ocplan.js?v=58c5e1e940",
+      "./js/share.js": "./js/share.js?v=d87d268a55",
       "./js/sync.js": "./js/sync.js?v=5fa127179a",
       "./js/targets-page.js": "./js/targets-page.js?v=5e4864374b",
       "./js/targets.js": "./js/targets.js?v=327b2b65b2",
-      "./js/training-page.js": "./js/training-page.js?v=4d70354cde",
+      "./js/training-page.js": "./js/training-page.js?v=a50f102570",
       "./js/training.js": "./js/training.js?v=4f44ff9e40"
     }
   }</script>
-  <script type="module" src="js/app.js?v=eb73c923c3"></script>
+  <script type="module" src="js/app.js?v=ffd3aaed5b"></script>
   <!-- assets:end -->
 </head>
 <body>
@@ -119,6 +120,7 @@
       </div>
 
       <div id="trading-view" hidden>
+        <div class="toolbar"><span class="muted small">Totals follow the Show, Sell via and Range choices.</span><button id="trading-copy" type="button" class="secondary">Copy summary</button></div>
         <div class="cards" id="trading-cards"></div>
         <div class="charts">
           <figure class="chart-card"><figcaption>Realised profit (running total)</figcaption><div class="chart-box" id="chart-realised"></div></figure>
@@ -249,7 +251,10 @@
       <section id="en-results" hidden>
         <div class="toolbar">
           <span class="muted" id="en-asof"></span>
-          <button id="en-refresh" type="button" class="secondary">Refresh</button>
+          <span>
+            <button id="en-copy" type="button" class="secondary">Copy summary</button>
+            <button id="en-refresh" type="button" class="secondary">Refresh</button>
+          </span>
         </div>
         <div class="cards" id="en-cards"></div>
         <div class="energy-grid">
@@ -290,6 +295,7 @@
         <div class="toolbar">
           <span class="muted" id="tr-asof"></span>
           <span>
+            <button id="tr-copy" type="button" class="secondary">Copy summary</button>
             <button id="tr-older" type="button" class="secondary">Read older history</button>
             <button id="tr-refresh" type="button" class="secondary">Refresh</button>
           </span>
@@ -329,7 +335,7 @@
         <h2 class="section-title">Training jumps</h2>
         <div class="table-wrap">
           <table id="tr-jumps">
-            <thead><tr><th>Trained (TCT)</th><th>Stacked</th><th class="num">Cost</th><th class="num">Gym energy</th><th class="num">Stats gained</th><th class="num">Cost / stat</th><th class="num">Gain / energy</th></tr></thead>
+            <thead><tr><th>Trained (TCT)</th><th>Stacked</th><th class="num">Cost</th><th class="num">Gym energy</th><th class="num">Stats gained</th><th class="num">Cost / stat</th><th class="num">Gain / energy</th><th><span class="sr-only">Copy</span></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>

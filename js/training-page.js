@@ -1,6 +1,7 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
 import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
+import { summaryText, copyFrom } from './share.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
   weeklyTraining, trainingTotals, jumpRole, planJumps, stockLevels, calibrate, gymDots, jumpGain,
@@ -38,6 +39,15 @@ export function createTrainingPage(ctx) {
   $('#tr-stat').addEventListener('change', () => { store.set('training', { ...read(), stat: $('#tr-stat').value }); render(); });
   $('#tr-refresh').addEventListener('click', () => load());
   $('#tr-older').addEventListener('click', () => readOlder());
+
+  // ---------- copying for chat ----------
+  let shown = { jumps: [], summary: '' }; // what's on screen, for the copy buttons
+  $('#tr-copy').addEventListener('click', (e) => copyFrom(e.currentTarget, () => shown.summary, status));
+  $('#tr-jumps tbody').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-jump]');
+    const j = btn && shown.jumps[Number(btn.dataset.jump)];
+    if (j) copyFrom(btn, () => jumpSummary(j), status);
+  });
 
   // ---------- loading ----------
   async function load() {
@@ -201,6 +211,7 @@ export function createTrainingPage(ctx) {
     $('#tr-asof').textContent = `As of ${tct(now)} TCT${cov?.oldest ? ` · history back to ${day(cov.oldest)}${cov.complete ? ' (complete)' : ''}` : ''}`;
     renderCards(totals, sessions, s, sources(uses));
     renderJumps(jumps);
+    shown = { jumps, summary: periodSummary(s, totals, jumps) };
     renderItems(usesByItem(uses), effectOf);
     const energy = store.get('energy', {});
     const anchor = weekWindow(now, energy.weekStartDay ?? DEFAULTS.weekStartDay, energy.weekStartHour ?? DEFAULTS.weekStartHour).start;
@@ -235,7 +246,7 @@ export function createTrainingPage(ctx) {
   }
 
   function renderJumps(jumps) {
-    $('#tr-jumps tbody').innerHTML = jumps.map((j) => {
+    $('#tr-jumps tbody').innerHTML = jumps.map((j, i) => {
       const stacked = j.stackFrom < j.start - 3600 ? ` <span class="muted">· stacked from ${tct(j.stackFrom)}</span>` : '';
       return `<tr>
         <td>${tct(j.start)}${stacked}</td>
@@ -245,8 +256,38 @@ export function createTrainingPage(ctx) {
         <td class="num">${j.gain == null ? '—' : n0(j.gain)}${j.stats.length ? ` <span class="muted">${esc(j.stats.join(', '))}</span>` : ''}</td>
         <td class="num">${j.gain ? money(j.cost / j.gain) : '—'}</td>
         <td class="num">${j.gain != null && j.energy ? ratio(j.gain / j.energy) : '—'}</td>
+        <td><button type="button" class="secondary small" data-jump="${i}" title="Copy this jump as text for chat">Copy</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" class="muted">No jumps in this range — a jump is training straight after Ecstasy or a big happy item like an erotic DVD.</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted">No jumps in this range — a jump is training straight after Ecstasy or a big happy item like an erotic DVD.</td></tr>';
+  }
+
+  const statsLabel = (j) => (j.gain == null ? null : `+${n0(j.gain)}${j.stats.length ? ` ${j.stats.join('/')}` : ' stats'}`);
+
+  /** One jump in a few plain lines for chat. */
+  function jumpSummary(j) {
+    return summaryText([
+      `Happy jump · ${tct(j.start)} TCT`,
+      `Stack: ${stackLabel(j.uses)}`,
+      `${n0(j.energy)} energy${j.gain == null ? '' : ` → ${statsLabel(j)} (${ratio(j.gain / j.energy)} per energy)`}`,
+      `Cost ${money(j.cost)}${j.estimatedQty ? ' (some at market value)' : ''}${j.gain ? ` · ${money(j.cost / j.gain)} per stat` : ''}`,
+    ]);
+  }
+
+  /** The range's totals in a few plain lines for chat, with the best jump. */
+  function periodSummary(s, t, jumps) {
+    const range = s.range === 'all' ? 'all saved history' : `last ${s.range} days`;
+    const boost = t.jumpGainPerEnergy && t.otherGainPerEnergy ? t.jumpGainPerEnergy / t.otherGainPerEnergy : null;
+    const best = jumps.filter((j) => j.gain != null && j.energy).sort((a, b) => b.gain / b.energy - a.gain / a.energy)[0];
+    return summaryText([
+      `Training · ${range}`,
+      `Gym energy ${n0(t.energy)}${t.gain != null ? ` → +${n0(t.gain)} stats` : ''}`,
+      `Consumables ${money(t.spend)}${t.perGain ? ` · ${money(t.perGain)} per stat` : ''}${t.perEnergy ? ` · ${money(t.perEnergy)} per energy` : ''}`,
+      t.jumps
+        ? `Jumps: ${n0(t.jumps)} · ${n0(t.jumpEnergy)} energy${t.jumpGain != null ? ` → +${n0(t.jumpGain)} stats` : ''} · ${money(t.jumpCost / t.jumps)} each`
+        : 'No happy jumps',
+      boost && `Jumps gained ×${boost.toFixed(1)} stats per energy vs normal training (${ratio(t.jumpGainPerEnergy)} vs ${ratio(t.otherGainPerEnergy)})`,
+      best && jumps.length > 1 && `Best jump: ${tct(best.start)} TCT, ${statsLabel(best)} from ${n0(best.energy)} energy`,
+    ]);
   }
 
   function effectLabel(e) {
