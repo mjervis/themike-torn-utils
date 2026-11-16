@@ -18,7 +18,7 @@ import { createTargetsPage } from './targets-page.js';
 import { createOcPage } from './oc-page.js';
 import { createOcPlanPage } from './ocplan-page.js';
 import { isMugLogTitle } from './targets.js';
-import { summaryText, copyFrom } from './share.js';
+import { summaryText, copyFrom, chatMoney, chatSigned } from './share.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
   buildLedger, parseTrades, tradeSummary, realisedByDay,
@@ -847,6 +847,7 @@ function renderHistory() {
 }
 
 // ---------- trading view ----------
+const BAZAAR_LINE_MIN = 10000; // smaller bazaars are left out of the copied summary
 let tradingSummary = ''; // the Trading tab's figures as plain text, for the copy button
 $('#trading-copy').addEventListener('click', (e) => copyFrom(e.currentTarget, () => tradingSummary, status));
 function renderTrading() {
@@ -896,17 +897,20 @@ function renderTrading() {
     <div class="card"><div class="label">Overall profit</div><div class="value ${signClass(realised + unrealised)}">${money(realised + unrealised)}</div><div class="sub">realised + unrealised · ${esc(viewLabel())}</div></div>`;
 
   // Plain text for chat: the cards in a few lines, plus the best and worst items.
-  const signed = (n) => (n > 0 ? `+${money(n)}` : money(n));
   const sold = list.filter((r) => r.soldQty && r.realised != null).sort((a, b) => b.realised - a.realised);
   const top = sold.slice(0, 3).filter((r) => r.realised > 0);
   const worst = sold.length > 3 ? sold.slice(-2).reverse().filter((r) => r.realised < 0) : [];
+  // Found units sold at $0 cost are what push a margin into the hundreds, so say how many there were.
+  const soldFree = sum('soldFreeQty');
+  const margin = [costOfSold && `${pct(realised / costOfSold)} margin`,
+    soldFree && `${money0.format(soldFree)} of ${money0.format(sum('soldQty'))} sold were found, at $0`].filter(Boolean).join(', ');
   tradingSummary = summaryText([
     `Trading · ${rangeLabel} · ${viewLabel()}`,
-    `Bought ${money(sum('spent'))} (${money0.format(sum('boughtQty'))} units) · Sold ${money(sum('proceeds'))} after fees (${money0.format(sum('soldQty'))} units)`,
-    `Realised ${signed(realised)}${costOfSold ? ` (${pct(realised / costOfSold)} margin)` : ''} · Unrealised ${signed(unrealised)} · Overall ${signed(realised + unrealised)}`,
-    listed.length && `Bazaar: ${money0.format(bazaarSum('qty'))} units listed for ${money(bazaarSum('value'))}${bazaarProfit != null ? `, ${signed(bazaarProfit)} if it all sells` : ''}`,
-    top.length && `Best: ${top.map((r) => `${r.name} ${signed(r.realised)}`).join(', ')}`,
-    worst.length && `Worst: ${worst.map((r) => `${r.name} ${signed(r.realised)}`).join(', ')}`,
+    `Bought ${chatMoney(sum('spent'))} (${money0.format(sum('boughtQty'))} units) · Sold ${chatMoney(sum('proceeds'))} after fees (${money0.format(sum('soldQty'))} units)`,
+    `Realised ${chatSigned(realised)}${margin ? ` (${margin})` : ''} · Unrealised ${chatSigned(unrealised)} · Overall ${chatSigned(realised + unrealised)}`,
+    bazaarSum('value') >= BAZAAR_LINE_MIN && `Bazaar: ${money0.format(bazaarSum('qty'))} units listed for ${chatMoney(bazaarSum('value'))}${bazaarProfit != null ? `, ${chatSigned(bazaarProfit)} if it all sells` : ''}`,
+    top.length && `Best: ${top.map((r) => `${r.name} ${chatSigned(r.realised)}`).join(', ')}`,
+    worst.length && `Worst: ${worst.map((r) => `${r.name} ${chatSigned(r.realised)}`).join(', ')}`,
   ]);
 
   const pts = realisedByDay(ledger.sales.filter((x) => (from == null || x.timestamp >= from) && include(x.itemId)));
