@@ -86,6 +86,18 @@ test('tradeSummary totals per item within a date range', () => {
   assert.equal(recent[0].realised, 50);
 });
 
+test('tradeSummary counts sold units that were found, even when found before the range', () => {
+  const ledger = buildLedger([
+    log('f1', 100, 2, { item: 9, quantity: 2 }),
+    log('p1', 200, 1, { item: 9, quantity: 1, cost_each: 100 }),
+    log('s1', 900, 3, { item: 9, quantity: 3, cost_each: 300 }, 'Bazaar sell'),
+  ], types);
+  const [nine] = tradeSummary(ledger, { from: 500 });
+  assert.equal(nine.foundQty, 0); // the finds were before the range
+  assert.equal(nine.soldFreeQty, 2);
+  assert.equal(nine.costOfSold, 100);
+});
+
 test('realisedByDay is a running total', () => {
   const day = 86400;
   const pts = realisedByDay([{ timestamp: day + 5, realised: 10 }, { timestamp: 5, realised: 5 }, { timestamp: day + 9, realised: -3 }]);

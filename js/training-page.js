@@ -1,7 +1,7 @@
 import { DEFAULTS, weekWindow, isGymLogTitle, gymSessions } from './energy.js';
 import { syncLogs, backfillOlder, historyCoverage, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
-import { summaryText, copyFrom } from './share.js';
+import { summaryText, copyFrom, chatMoney } from './share.js';
 import {
   CONSUMABLE_TYPES, trainingEffect, trainingBursts, costUses, detectJumps, usesByItem, sources,
   weeklyTraining, trainingTotals, jumpRole, planJumps, stockLevels, calibrate, gymDots, jumpGain,
@@ -247,13 +247,13 @@ export function createTrainingPage(ctx) {
 
   function renderJumps(jumps) {
     $('#tr-jumps tbody').innerHTML = jumps.map((j, i) => {
-      const stacked = j.stackFrom < j.start - 3600 ? ` <span class="muted">· stacked from ${tct(j.stackFrom)}</span>` : '';
+      const stacked = j.stackFrom < j.start - 3600 ? `<div class="muted small">stacked from ${tct(j.stackFrom)}</div>` : '';
       return `<tr>
         <td>${tct(j.start)}${stacked}</td>
         <td class="wrap">${esc(stackLabel(j.uses))}<div class="muted small">${esc(sourceLabel(j.uses))}</div></td>
         <td class="num">${money(j.cost)}${approx(j)}</td>
         <td class="num">${n0(j.energy)}</td>
-        <td class="num">${j.gain == null ? '—' : n0(j.gain)}${j.stats.length ? ` <span class="muted">${esc(j.stats.join(', '))}</span>` : ''}</td>
+        <td class="num">${j.gain == null ? '—' : n0(j.gain)}${j.stats.length ? `<div class="muted small">${esc(j.stats.join(', '))}</div>` : ''}</td>
         <td class="num">${j.gain ? money(j.cost / j.gain) : '—'}</td>
         <td class="num">${j.gain != null && j.energy ? ratio(j.gain / j.energy) : '—'}</td>
         <td><button type="button" class="secondary small" data-jump="${i}" title="Copy this jump as text for chat">Copy</button></td>
@@ -261,6 +261,8 @@ export function createTrainingPage(ctx) {
     }).join('') || '<tr><td colspan="8" class="muted">No jumps in this range — a jump is training straight after Ecstasy or a big happy item like an erotic DVD.</td></tr>';
   }
 
+  // Stats per energy, always to one decimal place so figures side by side read the same way.
+  const per = (n) => (n == null || !Number.isFinite(n) ? '—' : n.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
   const statsLabel = (j) => (j.gain == null ? null : `+${n0(j.gain)}${j.stats.length ? ` ${j.stats.join('/')}` : ' stats'}`);
 
   /** One jump in a few plain lines for chat. */
@@ -268,8 +270,8 @@ export function createTrainingPage(ctx) {
     return summaryText([
       `Happy jump · ${tct(j.start)} TCT`,
       `Stack: ${stackLabel(j.uses)}`,
-      `${n0(j.energy)} energy${j.gain == null ? '' : ` → ${statsLabel(j)} (${ratio(j.gain / j.energy)} per energy)`}`,
-      `Cost ${money(j.cost)}${j.estimatedQty ? ' (some at market value)' : ''}${j.gain ? ` · ${money(j.cost / j.gain)} per stat` : ''}`,
+      `${n0(j.energy)} energy${j.gain == null ? '' : ` → ${statsLabel(j)} (${per(j.gain / j.energy)} per energy)`}`,
+      `Cost ${chatMoney(j.cost)}${j.estimatedQty ? ` (${n0(j.estimatedQty)} item${j.estimatedQty === 1 ? '' : 's'} with no purchase on record, at market value)` : ''}${j.gain ? ` · ${chatMoney(j.cost / j.gain)} per stat` : ''}`,
     ]);
   }
 
@@ -281,11 +283,12 @@ export function createTrainingPage(ctx) {
     return summaryText([
       `Training · ${range}`,
       `Gym energy ${n0(t.energy)}${t.gain != null ? ` → +${n0(t.gain)} stats` : ''}`,
-      `Consumables ${money(t.spend)}${t.perGain ? ` · ${money(t.perGain)} per stat` : ''}${t.perEnergy ? ` · ${money(t.perEnergy)} per energy` : ''}`,
+      `Consumables ${chatMoney(t.spend)}${t.perGain ? ` · ${chatMoney(t.perGain)} per stat` : ''}${t.perEnergy ? ` · ${chatMoney(t.perEnergy)} per energy` : ''}`,
       t.jumps
-        ? `Jumps: ${n0(t.jumps)} · ${n0(t.jumpEnergy)} energy${t.jumpGain != null ? ` → +${n0(t.jumpGain)} stats` : ''} · ${money(t.jumpCost / t.jumps)} each`
+        ? `Jumps: ${n0(t.jumps)} · ${n0(t.jumpEnergy)} energy${t.jumpGain != null ? ` → +${n0(t.jumpGain)} stats` : ''}`
+          + ` · ${chatMoney(t.jumpCost)} (avg ${chatMoney(t.jumpCost / t.jumps)})${t.jumpGain ? ` · ${chatMoney(t.jumpCost / t.jumpGain)} per stat` : ''}`
         : 'No happy jumps',
-      boost && `Jumps gained ×${boost.toFixed(1)} stats per energy vs normal training (${ratio(t.jumpGainPerEnergy)} vs ${ratio(t.otherGainPerEnergy)})`,
+      boost && `Jumps gained ×${boost.toFixed(1)} stats per energy vs normal training (${per(t.jumpGainPerEnergy)} vs ${per(t.otherGainPerEnergy)})`,
       best && jumps.length > 1 && `Best jump: ${tct(best.start)} TCT, ${statsLabel(best)} from ${n0(best.energy)} energy`,
     ]);
   }

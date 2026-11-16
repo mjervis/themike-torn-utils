@@ -232,7 +232,7 @@ export function tradeSummary(ledger, { from = null, include = () => true } = {})
     if (!rows.has(id)) {
       rows.set(id, {
         itemId: id, boughtQty: 0, spent: 0, foundQty: 0, soldQty: 0, gross: 0, proceeds: 0,
-        matchedQty: 0, matchedProceeds: 0, costOfSold: 0, realised: 0, unknownQty: 0,
+        matchedQty: 0, matchedProceeds: 0, costOfSold: 0, realised: 0, unknownQty: 0, soldFreeQty: 0,
         usedQty: 0, usedCost: 0, feeEstimated: false, lastSale: null,
       });
     }
@@ -253,6 +253,7 @@ export function tradeSummary(ledger, { from = null, include = () => true } = {})
     r.costOfSold += s.cost;
     r.realised += s.realised;
     r.unknownQty += s.unknownQty;
+    r.soldFreeQty += s.freeQty ?? 0;
     r.feeEstimated ||= s.feeEstimated;
     r.lastSale = Math.max(r.lastSale ?? 0, s.timestamp);
   }

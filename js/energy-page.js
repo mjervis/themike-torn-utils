@@ -212,20 +212,35 @@ export function createEnergyPage(ctx) {
       d.energydrinkused && `${d.energydrinkused} can${d.energydrinkused === 1 ? '' : 's'}`,
       d.lsdtaken && `${d.lsdtaken} LSD`,
     ].filter(Boolean);
+    // Where the rest comes from, as on the page: the jump, natural regen, then any boosters.
+    const sources = [
+      r.jump?.inWeek && `happy jump ${n0(r.jump.energy)}`,
+      `natural regen${r.jump?.inWeek ? ' after it' : ''} ≈ ${n0(r.natural)}`,
+      ...r.allocations.map((a) => `${a.count}× ${a.label} ${n0(a.count * a.energyEach)}`),
+    ].filter(Boolean).join(' + ');
     const verdict = !s.target ? null
-      : !p.remaining ? 'Target met'
-        : r.shortfall ? `Short by ${n0(r.shortfall)} even with every option`
-          : `On track — ${n0(p.remaining)} to go${r.allocations.length ? ` (${r.allocations.map((a) => `${a.count}× ${a.label}`).join(', ')})` : ' on natural regen'}`;
+      : !p.remaining ? `Target met${r.jump ? ' — the jump is extra' : ''}`
+        : r.shortfall ? `Short by ${n0(r.shortfall)} even with every option (${n0(p.remaining)} to go)`
+          : `On track: ${n0(p.remaining)} to go from ${sources}`;
+    // "6d 16h left" reads better in chat than 160 hours.
+    const left = Math.max(0, week.end - now) / 3600;
+    const leftLabel = left >= 24 ? `${Math.floor(left / 24)}d ${Math.floor(left % 24)}h` : fmtHours(left);
+    const activity = [
+      sessions.length && `${sessions.length} gym session${sessions.length === 1 ? '' : 's'}`,
+      best?.energy && `best day ${dayName(best.start)} ${n0(best.energy)}`,
+      attacks && `attacks ≈ ${n0(attacks)}`,
+    ].filter(Boolean).join(' · ');
+    const stacked = bars.energy.current > bars.energy.maximum;
     return summaryText([
-      `Energy · week ${date(week.start)} – ${date(week.end)} · ${until(week.end)} left`,
+      `Energy · week ${date(week.start)} – ${date(week.end)} · ${leftLabel} left`,
       s.target
-        ? `Gym: ${n0(spent)} / ${n0(s.target)} (${Math.round(Math.min(1, spent / s.target) * 100)}%) · ${p.ahead >= 0 ? '+' : '−'}${n0(Math.abs(p.ahead))} ${p.ahead >= 0 ? 'ahead of' : 'behind'} pace`
+        ? `Gym: ${n0(spent)} / ${n0(s.target)} (${Math.round(Math.min(1, spent / s.target) * 100)}%) · ${n0(Math.abs(p.ahead))} ${p.ahead >= 0 ? 'ahead of' : 'behind'} pace`
         : `Gym: ${n0(spent)} energy`,
-      `${sessions.length} gym sessions${best?.energy ? ` · best day ${dayName(best.start)} ${n0(best.energy)}` : ''}${attacks ? ` · attacks ≈ ${n0(attacks)}` : ''}`,
+      activity,
       gained.length && `Used: ${gained.join(', ')}`,
-      r.jump && `Stacking for a happy jump: ${n0(r.jump.energy)} energy${r.jump.at <= now ? ' now' : ` at ${tct(r.jump.at)}`}`,
+      r.jump && `Stacking for a happy jump: ${n0(r.jump.energy)} energy${r.jump.at <= now ? ' now' : ` at ${tct(r.jump.at)}`}${r.jump.inWeek ? '' : ' (after this week ends)'}`,
       verdict,
-      `Energy now ${n0(bars.energy.current)} / ${n0(bars.energy.maximum)}`,
+      `Energy now ${n0(bars.energy.current)} / ${n0(bars.energy.maximum)}${stacked ? ' (stacked)' : ''}`,
     ]);
   }
 
