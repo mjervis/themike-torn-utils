@@ -4,6 +4,7 @@ import {
 } from './energy.js';
 import { syncLogs, loadGyms, loadBars, loadInventoryCategories, savedInventory, savedLogs } from './sync.js';
 import { meta } from './db.js';
+import { summaryText, copyFrom } from './share.js';
 
 const ENERGY_CATEGORIES = ['Drug', 'Energy Drink', 'Booster'];
 const ENERGY_TYPES = new Set(ENERGY_CATEGORIES);
@@ -22,6 +23,8 @@ const ownedOf = (items) => {
 export function createEnergyPage(ctx) {
   const { $, store, status, esc, money, num } = ctx;
   const data = { loaded: false, gymCost: null };
+  let summary = ''; // the week as plain text, for the copy button
+  $('#en-copy').addEventListener('click', (e) => copyFrom(e.currentTarget, () => summary, status));
 
   // ---------- settings ----------
   const hours = (prefix = '') => Array.from({ length: 24 }, (_, h) =>
@@ -192,6 +195,38 @@ export function createEnergyPage(ctx) {
     renderCards(s, spent, p, result);
     renderFeed(s, p, result);
     renderWeek(s, spent);
+    summary = weekSummary(s, spent, p, result);
+  }
+
+  /** The week in a few plain lines for chat: progress, pace, where the energy came from and the plan's verdict. */
+  function weekSummary(s, spent, p, r) {
+    const { week, now, sessions, deltas: d, bars } = data;
+    const date = (t) => new Date(t * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+    const days = dailyTotals(sessions, week.start).filter((x) => x.start <= now);
+    const best = days.reduce((a, b) => (b.energy > (a?.energy ?? 0) ? b : a), null);
+    const dayName = (t) => new Date(t * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short' });
+    const attacks = attackEnergy(d);
+    const gained = [
+      d.xantaken && `${d.xantaken} Xanax`,
+      d.refills && `${d.refills} refill${d.refills === 1 ? '' : 's'}`,
+      d.energydrinkused && `${d.energydrinkused} can${d.energydrinkused === 1 ? '' : 's'}`,
+      d.lsdtaken && `${d.lsdtaken} LSD`,
+    ].filter(Boolean);
+    const verdict = !s.target ? null
+      : !p.remaining ? 'Target met'
+        : r.shortfall ? `Short by ${n0(r.shortfall)} even with every option`
+          : `On track — ${n0(p.remaining)} to go${r.allocations.length ? ` (${r.allocations.map((a) => `${a.count}× ${a.label}`).join(', ')})` : ' on natural regen'}`;
+    return summaryText([
+      `Energy · week ${date(week.start)} – ${date(week.end)} · ${until(week.end)} left`,
+      s.target
+        ? `Gym: ${n0(spent)} / ${n0(s.target)} (${Math.round(Math.min(1, spent / s.target) * 100)}%) · ${p.ahead >= 0 ? '+' : '−'}${n0(Math.abs(p.ahead))} ${p.ahead >= 0 ? 'ahead of' : 'behind'} pace`
+        : `Gym: ${n0(spent)} energy`,
+      `${sessions.length} gym sessions${best?.energy ? ` · best day ${dayName(best.start)} ${n0(best.energy)}` : ''}${attacks ? ` · attacks ≈ ${n0(attacks)}` : ''}`,
+      gained.length && `Used: ${gained.join(', ')}`,
+      r.jump && `Stacking for a happy jump: ${n0(r.jump.energy)} energy${r.jump.at <= now ? ' now' : ` at ${tct(r.jump.at)}`}`,
+      verdict,
+      `Energy now ${n0(bars.energy.current)} / ${n0(bars.energy.maximum)}`,
+    ]);
   }
 
   function renderCards(s, spent, p, r) {
