@@ -16,6 +16,7 @@ import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
 import { createTargetsPage } from './targets-page.js';
 import { createOcPage } from './oc-page.js';
+import { createOcPlanPage } from './ocplan-page.js';
 import { isMugLogTitle } from './targets.js';
 import {
   isSellLogTitle, isDefaultSellLog, isUseLogTitle, isDefaultUseLog, isTradeLogTitle, isDefaultTradeLog,
@@ -279,10 +280,11 @@ async function hydrate() {
   if (state.live) return {}; // a load finished meanwhile
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   if (!catalog) {
-    // Only the Targets or Organised crime page has been used: they don't need the item catalogue.
-    const [tg, oc] = await Promise.all([targets.restoreSaved({ db: state.db, player: last.id }), organisedCrime.restoreSaved({ db: state.db, player: last.id })]);
-    if (tg || oc) state.player ??= last;
-    return { ...(tg ? { targets: tg } : {}), ...(oc ? { oc } : {}) };
+    // Only the Targets or organised crime pages have been used: they don't need the item catalogue.
+    const own = { db: state.db, player: last.id };
+    const [tg, oc, op] = await Promise.all([targets.restoreSaved(own), organisedCrime.restoreSaved(own), ocPlanning.restoreSaved(own)]);
+    if (tg || oc || op) state.player ??= last;
+    return { ...(tg ? { targets: tg } : {}), ...(oc ? { oc } : {}), ...(op ? { ocplan: op } : {}) };
   }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
@@ -307,12 +309,13 @@ async function hydrate() {
   await renderSavedSummary();
   // The other pages read the Settings log types, so they go after renderLogTypes above.
   const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
-  const [en, tr, tg, oc] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx),
-    organisedCrime.restoreSaved(ctx)]);
+  const [en, tr, tg, oc, op] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx),
+    organisedCrime.restoreSaved(ctx), ocPlanning.restoreSaved(ctx)]);
   if (en) at.energy = en;
   if (tr) at.training = tr;
   if (tg) at.targets = tg;
   if (oc) at.oc = oc;
+  if (op) at.ocplan = op;
   return at;
 }
 
@@ -737,11 +740,19 @@ const organisedCrime = createOcPage({
   catalog: async () => (await ensureCatalog(), state.catalog),
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training', 'targets', 'oc', 'settings'];
+const ocPlanning = createOcPlanPage({
+  $, store, status, esc, num: money0,
+  client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: currentPlayer,
+  catalog: async () => (await ensureCatalog(), state.catalog),
+  onError: reportError,
+});
+const PAGES = ['inventory', 'energy', 'training', 'targets', 'oc', 'ocplan', 'settings'];
 // Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
-const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, oc: () => organisedCrime.live, settings: () => true };
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, oc: () => organisedCrime.live, ocplan: () => ocPlanning.live, settings: () => true };
 // Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), oc: () => organisedCrime.load(), settings: load };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), oc: () => organisedCrime.load(), ocplan: () => ocPlanning.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -752,7 +763,7 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', oc: 'Organised crime', settings: 'Settings' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', oc: 'Organised crime', ocplan: 'OC planning', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
   savedStatus();
   if (state.client && !live[page]()) loaders[page]();
