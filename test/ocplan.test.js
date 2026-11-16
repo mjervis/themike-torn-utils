@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cprHistory, lookupCpr, openSlots, hungarian, ocPlan, slotLabel, roleOf } from '../js/ocplan.js';
+import { cprHistory, lookupCpr, openSlots, hungarian, ocPlan, slotLabel, roleOf, planningPerSlot, crimeValues, estimateReady } from '../js/ocplan.js';
 
 const DAY = 86400;
 const NOW = Date.UTC(2026, 10, 16) / 1000;
@@ -119,4 +119,82 @@ test('ocPlan suggests OCs to spawn for members left without a slot', () => {
   ];
   const p = ocPlan(crimes, [member(1, 'Alice')], { now: NOW });
   assert.deepEqual(p.unplaced[0].known.map((k) => `${k.crime}:${k.role}`), ['Big:Robber', 'Big:Driver', 'Small:Lookout']);
+});
+
+test('planningPerSlot learns planning time per slot from past OCs', () => {
+  const past = (id, name, hours, n) => ({ ...crime(id, name, 3, 'Successful', Array.from({ length: n }, () => ['X', 1, 80])), planning_at: NOW - 10 * DAY, ready_at: NOW - 10 * DAY + hours * 3600 });
+  const per = planningPerSlot([past(1, 'A', 48, 4), past(2, 'A', 32, 4), past(3, 'B', 72, 3)]);
+  assert.equal(per('A'), 10 * 3600); // median of 12h and 8h a slot
+  assert.equal(per('B'), 24 * 3600);
+  assert.equal(per('Unknown'), 12 * 3600); // median over everything
+  assert.equal(planningPerSlot([])('A'), DAY);
+});
+
+test('crimeValues is average respect of successes times the success rate', () => {
+  const done = (id, name, level, status, respect) => ({ ...crime(id, name, level, status, [['X', 1, 80]]), rewards: status === 'Successful' ? { respect } : null });
+  const v = crimeValues([done(1, 'A', 3, 'Successful', 100), done(2, 'A', 3, 'Successful', 200), done(3, 'A', 3, 'Failure'), done(4, 'A', 3, 'Successful', 300)]);
+  assert.equal(v('A', 3).respect, 200 * 0.75);
+  assert.equal(v('A', 3).estimated, false);
+  assert.equal(v('New', 3).respect, 150); // the level's average
+  assert.equal(v('New', 3).estimated, true);
+  assert.equal(v('New', 8).respect, 8);   // nothing at that level: the level itself
+});
+
+test('estimateReady uses Torn\'s ready time once full, else the planning left', () => {
+  const c = crime(1, 'A', 3, 'Planning', [['X', 1, 80], ['Y', 2, 80], ['Z', null, 0]]);
+  c.slots[0].user.progress = 100;
+  c.slots[1].user.progress = 50;
+  assert.equal(estimateReady(c, 3600, NOW), NOW + 1.5 * 3600);
+  const full = { ...crime(2, 'A', 3, 'Planning', [['X', 1, 80]]), ready_at: NOW + 500 };
+  assert.equal(estimateReady(full, 3600, NOW), NOW + 500);
+});
+
+test('ocPlan "completed" fills whole OCs rather than spreading members across them', () => {
+  const crimes = [
+    crime(1, 'Big', 7, 'Successful', [['A', 1, 90], ['B', 2, 90], ['C', 3, 90]]),
+    crime(2, 'Pair', 2, 'Successful', [['A', 1, 80], ['B', 2, 80]]),
+    // Big needs three, but only Alice and Bob are free: filling it leaves Pair empty and Big unfinished.
+    crime(10, 'Big', 7, 'Recruiting', [['A', null, 0], ['B', null, 0], ['C', null, 0]]),
+    crime(11, 'Pair', 2, 'Recruiting', [['A', null, 0], ['B', null, 0]]),
+  ];
+  const members = [member(1, 'Alice'), member(2, 'Bob')];
+  const level = ocPlan(crimes, members, { now: NOW });
+  assert.deepEqual(level.assignments.map((a) => a.crime), ['Big', 'Big']);
+  const done = ocPlan(crimes, members, { now: NOW, prioritise: 'completed' });
+  assert.deepEqual(done.assignments.map((a) => a.crime), ['Pair', 'Pair']);
+  assert.equal(done.ocs[0].crime, 'Pair');
+  assert.equal(done.ocs[0].complete, true);
+  assert.equal(done.ocs[1].empty, 3);
+});
+
+test('ocPlan "respect" fills the OCs worth the most respect', () => {
+  const won = (id, name, respect, slots) => ({ ...crime(id, name, 3, 'Successful', slots), rewards: { respect } });
+  const crimes = [
+    won(1, 'Cheap', 10, [['A', 1, 90]]), won(2, 'Cheap2', 10, [['A', 2, 90]]), won(3, 'Rich', 50, [['A', 1, 90], ['B', 2, 90]]),
+    crime(10, 'Cheap', 3, 'Recruiting', [['A', null, 0]]),
+    crime(11, 'Cheap2', 3, 'Recruiting', [['A', null, 0]]),
+    crime(12, 'Rich', 3, 'Recruiting', [['A', null, 0], ['B', null, 0]]),
+  ];
+  const members = [member(1, 'Alice'), member(2, 'Bob')];
+  const count = ocPlan(crimes, members, { now: NOW, prioritise: 'completed' });
+  assert.deepEqual(count.ocs.filter((o) => o.complete).map((o) => o.crime).sort(), ['Cheap', 'Cheap2']);
+  const respect = ocPlan(crimes, members, { now: NOW, prioritise: 'respect' });
+  assert.deepEqual(respect.ocs.filter((o) => o.complete).map((o) => o.crime), ['Rich']);
+});
+
+test('ocPlan lists open OCs by earliest possible completion', () => {
+  const crimes = [
+    crime(1, 'A', 3, 'Successful', [['X', 1, 90], ['X', 2, 90]]),
+    { ...crime(10, 'A', 3, 'Planning', [['X', 5, 80], ['X', null, 0]]) },
+    crime(11, 'A', 5, 'Recruiting', [['X', null, 0], ['X', null, 0]]),
+  ];
+  crimes[1].slots[0].user.progress = 100;
+  // Higher-level OCs first puts Alice in the level 5 OC, which still needs another member…
+  const level = ocPlan(crimes, [member(1, 'Alice')], { now: NOW });
+  assert.deepEqual(level.ocs.map((o) => [o.crimeId, o.complete, o.empty]), [[10, false, 1], [11, false, 1]]);
+  // …while most OCs completed finishes the one already planning.
+  const p = ocPlan(crimes, [member(1, 'Alice')], { now: NOW, prioritise: 'completed' });
+  assert.deepEqual(p.ocs.map((o) => [o.crimeId, o.complete]), [[10, true], [11, false]]);
+  assert.ok(p.ocs[0].ready < p.ocs[1].ready);
+  assert.equal(p.assignments[0].crimeId, 10);
 });

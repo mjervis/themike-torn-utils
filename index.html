@@ -21,8 +21,8 @@
       "./js/ledger.js": "./js/ledger.js?v=10f18b9024",
       "./js/oc-page.js": "./js/oc-page.js?v=5d68e1eb2d",
       "./js/oc.js": "./js/oc.js?v=36e28ae30a",
-      "./js/ocplan-page.js": "./js/ocplan-page.js?v=d4c56d4bc1",
-      "./js/ocplan.js": "./js/ocplan.js?v=0b3eec4bdd",
+      "./js/ocplan-page.js": "./js/ocplan-page.js?v=a95ce4172e",
+      "./js/ocplan.js": "./js/ocplan.js?v=58c5e1e940",
       "./js/sync.js": "./js/sync.js?v=5fa127179a",
       "./js/targets-page.js": "./js/targets-page.js?v=5e4864374b",
       "./js/targets.js": "./js/targets.js?v=327b2b65b2",
@@ -510,6 +510,8 @@
           <label class="check">Prioritise <select id="op-prioritise">
             <option value="level">Higher-level OCs</option>
             <option value="cpr">Best pass rates</option>
+            <option value="completed">Most OCs completed</option>
+            <option value="respect">Most respect</option>
           </select></label>
           <label class="check">Leave out members inactive for <input id="op-active" class="short" type="number" min="0" step="1" value="3"> days</label>
         </div>
@@ -524,6 +526,14 @@
           </div>
         </div>
         <div class="cards" id="op-cards"></div>
+
+        <h2 class="section-title">Open OCs <span class="small muted">earliest possible completion first</span></h2>
+        <div class="table-wrap">
+          <table id="op-ocs">
+            <thead><tr><th>OC</th><th class="num">Level</th><th>Status</th><th class="num">Filled + recommended</th><th>Could be ready</th><th class="num">Expected respect</th><th>Expires</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
 
         <h2 class="section-title">Recommended placements</h2>
         <div class="table-wrap">
@@ -552,7 +562,9 @@
         <p id="op-skipped-wrap" class="hint" hidden><strong>Left out:</strong> <span id="op-skipped"></span></p>
 
         <p class="footnote">Torn only shows a member's checkpoint pass rate (CPR) for a slot once they've joined it, so each member's CPR is the one from the last time they were in that OC and slot (or another slot of the same role in it, marked ≈) — it may have gone up since. Your own CPR comes straight from the open slots.
-          Free members are everyone not in an OC, leaving out anyone inactive for longer than the days above or in federal jail. They're matched to the open slots all at once, to fill as many slots as possible with members at or above the minimum CPR; then, depending on “Prioritise”, higher-level OCs or the best pass rates; then the OCs nearest to starting. “Also passes” lists other free members who'd do for the slot.
+          Free members are everyone not in an OC, leaving out anyone inactive for longer than the days above or in federal jail. They're matched to the open slots all at once, to fill as many slots as possible with members at or above the minimum CPR; then, depending on “Prioritise”: higher-level OCs; the best pass rates; <em>most OCs completed</em> — as many OCs as possible filled completely so they can start, soonest ready first; or <em>most respect</em> — the OCs filled completely that are expected to earn the most respect. OCs these last two aim to fill are tagged “target”.
+          <strong>Open OCs</strong> are listed by when they could be ready: those the recommendations fill completely first, then the rest by how many members they'd still need. An OC that's full uses Torn's ready time; otherwise it's now plus the planning left, at the planning time per slot the faction's past OCs of that kind took (a day a slot if there are none), assuming the empty slots are filled straight away.
+          Expected respect is the average respect of the OC's past successes times its success rate; one the faction has never done uses the average for its level (≈). “Also passes” lists other free members who'd do for the slot.
           Items needed are what the slot requires — Torn doesn't say whether other members hold them. Needs a key with faction API access; the first load reads 90 days of past OCs, later loads only newer ones (4–5 API calls).</p>
       </section>
     </div>
