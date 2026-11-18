@@ -193,32 +193,6 @@ export function createClient(key) {
       return (await get(`/user/${id}/profile`)).profile;
     },
 
-    /** Your faction's members: id, name, position, level, last action, status. */
-    async factionMembers() {
-      return (await get('/faction/members')).members ?? [];
-    },
-
-    /** Your faction's member ids by crime experience, highest first. */
-    async factionCrimeExp() {
-      return (await get('/faction/crimeexp')).crimeexp ?? [];
-    },
-
-    /**
-     * Your faction's organised crimes in category `cat` (completed, available, expired…), newest first.
-     * `from`/`to` (unix seconds) apply to `filters`, e.g. executed_at; pages of 100 are read by offset.
-     * Needs faction API access permission.
-     */
-    async factionCrimes({ cat, filters, from, to, maxPages = 10 } = {}) {
-      const seen = new Map();
-      for (let p = 0; p < maxPages; p++) {
-        const body = await get('/faction/crimes', { cat, filters, from, to, sort: 'DESC', limit: 100, offset: p * 100 });
-        const list = body.crimes ?? [];
-        for (const c of list) seen.set(c.id, c);
-        if (list.length < 100) break;
-      }
-      return [...seen.values()];
-    },
-
     /** Energy, nerve, happy and life bars. */
     async bars() {
       return (await get('/user/bars')).bars;
