@@ -219,6 +219,14 @@ export function createClient(key) {
       return [...seen.values()];
     },
 
+    /**
+     * Each current member's running total for a faction challenge stat (e.g. gymenergy, drugoverdoses):
+     * [{ id, username, value, in_faction }]. Needs faction API access permission.
+     */
+    async factionContributors(stat) {
+      return (await get('/faction/contributors', { stat, cat: 'current' })).contributors ?? [];
+    },
+
     /** Energy, nerve, happy and life bars. */
     async bars() {
       return (await get('/user/bars')).bars;
