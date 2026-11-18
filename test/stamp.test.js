@@ -13,7 +13,7 @@ test('stamped() replaces only the assets block', () => {
   const out = stamped(html);
   assert.ok(out.startsWith('before\n<!-- assets:start'));
   assert.ok(out.endsWith('<!-- assets:end -->\nafter'));
-  assert.match(out, /"\.\/js\/oc\.js": "\.\/js\/oc\.js\?v=[0-9a-f]{10}"/);
+  assert.match(out, /"\.\/js\/energy\.js": "\.\/js\/energy\.js\?v=[0-9a-f]{10}"/);
   assert.match(out, /<script type="module" src="js\/app\.js\?v=[0-9a-f]{10}"><\/script>/);
   assert.throws(() => stamped('no block here'));
 });
