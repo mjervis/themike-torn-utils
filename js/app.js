@@ -15,6 +15,7 @@ import { ITEM_TYPES, DEFAULT_TRADE_TYPES, GROUPS, classify } from './categories.
 import { createEnergyPage } from './energy-page.js';
 import { createTrainingPage } from './training-page.js';
 import { createTargetsPage } from './targets-page.js';
+import { createEnergyLbPage } from './energylb-page.js';
 import { isMugLogTitle } from './targets.js';
 import { summaryText, copyFrom, chatMoney, chatSigned } from './share.js';
 import {
@@ -279,10 +280,11 @@ async function hydrate() {
   if (state.live) return {}; // a load finished meanwhile
   if (logTypes) { state.logTypes = logTypes.value; renderLogTypes(); }
   if (!catalog) {
-    // Only the Targets page has been used: it doesn't need the item catalogue.
-    const tg = await targets.restoreSaved({ db: state.db, player: last.id });
-    if (tg) state.player ??= last;
-    return tg ? { targets: tg } : {};
+    // Only the Targets or Faction energy pages have been used: they don't need the item catalogue.
+    const own = { db: state.db, player: last.id };
+    const [tg, fe] = await Promise.all([targets.restoreSaved(own), factionEnergy.restoreSaved(own)]);
+    if (tg || fe) state.player ??= last;
+    return { ...(tg ? { targets: tg } : {}), ...(fe ? { fenergy: fe } : {}) };
   }
   state.player = last;
   state.catalog = new Map(catalog.value.map((i) => [i.id, i]));
@@ -307,10 +309,12 @@ async function hydrate() {
   await renderSavedSummary();
   // The other pages read the Settings log types, so they go after renderLogTypes above.
   const ctx = { db: state.db, player: last.id, catalog: state.catalog, logTypes: state.logTypes };
-  const [en, tr, tg] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx)]);
+  const [en, tr, tg, fe] = await Promise.all([energy.restoreSaved(ctx), training.restoreSaved(ctx), targets.restoreSaved(ctx),
+    factionEnergy.restoreSaved(ctx)]);
   if (en) at.energy = en;
   if (tr) at.training = tr;
   if (tg) at.targets = tg;
+  if (fe) at.fenergy = fe;
   return at;
 }
 
@@ -726,11 +730,18 @@ const targets = createTargetsPage({
   logPages: () => settings.read().logPages,
   onError: reportError,
 });
-const PAGES = ['inventory', 'energy', 'training', 'targets', 'settings'];
+const factionEnergy = createEnergyLbPage({
+  $, store, status, esc, num: money0,
+  client: () => state.client,
+  db: async () => (await dbReady, state.db),
+  player: currentPlayer,
+  onError: reportError,
+});
+const PAGES = ['inventory', 'energy', 'training', 'targets', 'fenergy', 'settings'];
 // Whether a page has been loaded from Torn this session; pages showing saved data still load on a visit.
-const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, settings: () => true };
+const live = { inventory: () => state.live, energy: () => energy.live, training: () => training.live, targets: () => targets.live, fenergy: () => factionEnergy.live, settings: () => true };
 // Pressing Load on the Settings page loads the inventory, which also fills in the log type lists there.
-const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), settings: load };
+const loaders = { inventory: load, energy: () => energy.load(), training: () => training.load(), targets: () => targets.load(), fenergy: () => factionEnergy.load(), settings: load };
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -741,7 +752,7 @@ function showPage() {
   const page = currentPage();
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.id !== `page-${page}`; });
   document.querySelectorAll('.tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.page === page));
-  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', settings: 'Settings' }[page]} · Torn Utils`;
+  document.title = `${{ inventory: 'Inventory profit', energy: 'Energy', training: 'Training cost', targets: 'Targets', fenergy: 'Faction energy', settings: 'Settings' }[page]} · Torn Utils`;
   status('');
   savedStatus();
   if (state.client && !live[page]()) loaders[page]();

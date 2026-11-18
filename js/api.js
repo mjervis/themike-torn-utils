@@ -193,6 +193,19 @@ export function createClient(key) {
       return (await get(`/user/${id}/profile`)).profile;
     },
 
+    /** Your faction's members: id, name, position, level, last action, status. */
+    async factionMembers() {
+      return (await get('/faction/members')).members ?? [];
+    },
+
+    /**
+     * Each current member's running total for a faction challenge stat (e.g. gymenergy, drugoverdoses):
+     * [{ id, username, value, in_faction }]. Needs faction API access permission.
+     */
+    async factionContributors(stat) {
+      return (await get('/faction/contributors', { stat, cat: 'current' })).contributors ?? [];
+    },
+
     /** Energy, nerve, happy and life bars. */
     async bars() {
       return (await get('/user/bars')).bars;
